@@ -7,7 +7,16 @@ import { suggestMapping, fingerprint } from "@/core/columns";
 import { parseThreats } from "@/core/excel";
 import { parseRecommendations } from "@/core/recommendations";
 import { rankThreats } from "@/core/ranking";
-import type { ColumnMapping, ParsedThreat } from "@/core/types";
+import {
+  buildCondensedReview,
+  selectCondenseThreats,
+  selectCondenseRecos,
+  parseCondensedReview,
+} from "@/core/condense";
+import { condenseReview } from "@/llm/condense";
+import { validateConfig } from "@/lib/llm-config";
+import type { LlmConfig } from "@/lib/llm-config";
+import type { ColumnMapping, ParsedThreat, CondensedReview } from "@/core/types";
 import {
   MAX_FILE_BYTES,
   sane,
@@ -34,17 +43,6 @@ function ensureProject(name: string): ProjectRow {
   const row = get<ProjectRow>(`SELECT * FROM projects WHERE id = ?`, Number(lastInsertRowid));
   if (!row) throw new Error("Failed to create project");
   return row;
-}
-
-function validMapping(m: unknown): m is ColumnMapping {
-  return (
-    typeof m === "object" &&
-    m !== null &&
-    typeof (m as Record<string, unknown>).title === "string" &&
-    (m as Record<string, unknown>).title !== "" &&
-    typeof (m as Record<string, unknown>).stride === "string" &&
-    typeof (m as Record<string, unknown>).risk === "string"
-  );
 }
 
 export async function POST(req: NextRequest) {
@@ -89,16 +87,15 @@ export async function POST(req: NextRequest) {
     const notes = sane(form.get("notes"), 5000);
     const recommendationsText = sane(form.get("recommendationsText"), 200_000);
 
-    let mappingJson: unknown = null;
-    const mappingRaw = form.get("mappingJson");
-    if (typeof mappingRaw === "string" && mappingRaw.trim()) {
+    // Optional AI config (apiKey + model). Carried only in this request body;
+    // never persisted. Absent/invalid → deterministic-only review (no narrative).
+    let aiConfig: LlmConfig | null = null;
+    const configRaw = form.get("config");
+    if (typeof configRaw === "string" && configRaw.trim()) {
       try {
-        mappingJson = JSON.parse(mappingRaw);
+        aiConfig = validateConfig(JSON.parse(configRaw));
       } catch {
-        return bad("mappingJson is not valid JSON.");
-      }
-      if (!validMapping(mappingJson)) {
-        return bad("mappingJson must be an object with at least title, stride and risk header names.");
+        aiConfig = null;
       }
     }
 
@@ -116,18 +113,17 @@ export async function POST(req: NextRequest) {
       return bad("No readable sheet found: every sheet is empty or has no header row.");
     }
 
-    // Parse every sheet; each sheet uses the confirmed mapping when provided,
-    // otherwise its own suggested mapping (headers may differ across sheets).
+    // Columns are auto-detected: the STRIDE template is consistent, so each
+    // sheet uses its own suggested mapping (no column-mapping step).
     const primarySuggested = suggestMapping(primary.headers);
-    const usedMapping: ColumnMapping = (mappingJson as ColumnMapping) ?? primarySuggested.mapping;
-    const mappingSource = mappingJson ? "confirmed" : "suggested";
+    const usedMapping: ColumnMapping = primarySuggested.mapping;
 
     const allThreats: ParsedThreat[] = [];
     const warnings: string[] = [];
     for (const sheet of workbook.sheets) {
       const headers = sheet.rows[0] ?? [];
       if (!headers.some((h) => h.trim() !== "")) continue;
-      const mapping = mappingJson ? (mappingJson as ColumnMapping) : suggestMapping(headers).mapping;
+      const mapping = suggestMapping(headers).mapping;
       const parsed = parseThreats([{ name: sheet.name, rows: sheet.rows }], mapping);
       // A sheet that yields no titled threats under this mapping is not a
       // threat table (e.g. a cover/"Notes" sheet). Skip it silently instead of
@@ -170,6 +166,37 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The single AI call: condense the review's threats + recommendations into
+    // a grounded narrative. Deterministic posture/counts are computed in code
+    // regardless. No key (or an AI failure) → deterministic-only record; the
+    // review still exists, it just carries no narrative. AI never blocks.
+    let narrative: {
+      headline: string;
+      observations: string[];
+      keyRecommendations: string[];
+    } | null = null;
+    if (aiConfig) {
+      try {
+        narrative = await condenseReview(
+          aiConfig,
+          selectCondenseThreats(validThreats, ranks),
+          selectCondenseRecos(recos)
+        );
+      } catch {
+        narrative = null;
+        warnings.push(
+          "AI could not condense this review; stored the deterministic risk posture only. Check the API key and re-submit to generate observations."
+        );
+      }
+    }
+
+    const condensed: CondensedReview = buildCondensedReview(
+      validThreats,
+      ranks,
+      recos,
+      narrative
+    );
+
     const result = transaction(() => {
       const project = ensureProject(projectName);
       const row = get<{ v: number }>(
@@ -181,8 +208,8 @@ export async function POST(req: NextRequest) {
       const { lastInsertRowid } = run(
         `INSERT INTO submissions
            (project_id, reviewer_id, review_date, notes, excel_filename,
-            excel_fingerprint, version, mapping_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            excel_fingerprint, version, mapping_json, condensed_review_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         project.id,
         reviewer.id,
         reviewDate,
@@ -191,66 +218,20 @@ export async function POST(req: NextRequest) {
         fp,
         version,
         JSON.stringify(usedMapping),
+        JSON.stringify(condensed),
         now()
       );
       const submissionId = Number(lastInsertRowid);
 
-      const insertThreat = `INSERT INTO threats
-        (submission_id, excel_sheet, excel_row, threat_ref, title, description,
-         stride_category, component, mitre, risk_level, existing_controls,
-         safety_metrics, severity_score, status, rank_score, rank_explanation, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Open', ?, ?, ?)`;
-      validThreats.forEach((t, i) => {
-        run(
-          insertThreat,
-          submissionId,
-          sane(t.sheet, 200),
-          t.row,
-          sane(t.ref, 100),
-          sane(t.title, 2000),
-          sane(t.description, 20000),
-          sane(t.stride, 100),
-          sane(t.component, 500),
-          JSON.stringify(Array.isArray(t.mitre) ? t.mitre : []),
-          sane(t.risk, 100),
-          sane(t.existingControls, 10000),
-          sane(t.safetyMetrics, 10000),
-          t.severityScore,
-          ranks[i]?.score ?? null,
-          sane(ranks[i]?.explanation ?? "", 2000),
-          now()
-        );
-      });
-
-      recos.forEach((r) => {
-        run(
-          `INSERT INTO recommendations
-             (submission_id, reco_index, text, owner, priority, timeline, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'Open', ?)`,
-          submissionId,
-          r.index,
-          sane(r.text, 20000),
-          sane(r.owner, 200),
-          sane(r.priority, 100),
-          sane(r.timeline, 200),
-          now()
-        );
-      });
-
-      run(
-        `INSERT OR REPLACE INTO column_mappings (fingerprint, mapping_json, created_at)
-         VALUES (?, ?, ?)`,
-        fp,
-        JSON.stringify(usedMapping),
-        now()
-      );
+      // Raw per-threat/per-reco rows are intentionally NOT persisted — only the
+      // condensed review is stored (there will be thousands of reviews).
 
       audit(
         reviewerName,
         "submission.created",
         "submission",
         submissionId,
-        `v${version} of "${projectName}": ${validThreats.length} threats, ${recos.length} recommendations from ${filename}`
+        `v${version} of "${projectName}": ${validThreats.length} threats, ${recos.length} recommendations condensed from ${filename}`
       );
 
       return { submissionId, version, projectId: project.id, reviewerId: reviewer.id };
@@ -263,8 +244,7 @@ export async function POST(req: NextRequest) {
         version: result.version,
         threatCount: validThreats.length,
         recoCount: recos.length,
-        mapping: usedMapping,
-        mappingSource,
+        aiGenerated: condensed.aiGenerated,
         warnings,
       },
     });
@@ -305,13 +285,9 @@ export async function GET(req: NextRequest) {
     const rows = all<SubmissionRow & {
       project_name: string;
       reviewer_name: string;
-      threat_count: number;
-      reco_count: number;
     }>(
       `SELECT s.*,
-              p.name AS project_name, r.name AS reviewer_name,
-              (SELECT COUNT(*) FROM threats t WHERE t.submission_id = s.id) AS threat_count,
-              (SELECT COUNT(*) FROM recommendations rc WHERE rc.submission_id = s.id) AS reco_count
+              p.name AS project_name, r.name AS reviewer_name
        FROM submissions s
        JOIN projects p ON p.id = s.project_id
        JOIN reviewers r ON r.id = s.reviewer_id
@@ -320,18 +296,22 @@ export async function GET(req: NextRequest) {
       ...params
     );
 
-    const submissions = rows.map((s) => ({
-      id: s.id,
-      projectName: s.project_name,
-      reviewerName: s.reviewer_name,
-      version: s.version,
-      reviewDate: s.review_date,
-      createdAt: s.created_at,
-      notes: s.notes,
-      excelFilename: s.excel_filename,
-      threatCount: s.threat_count,
-      recoCount: s.reco_count,
-    }));
+    const submissions = rows.map((s) => {
+      const condensed = parseCondensedReview(s.condensed_review_json);
+      return {
+        id: s.id,
+        projectName: s.project_name,
+        reviewerName: s.reviewer_name,
+        version: s.version,
+        reviewDate: s.review_date,
+        createdAt: s.created_at,
+        notes: s.notes,
+        excelFilename: s.excel_filename,
+        threatCount: condensed.threatCount,
+        recoCount: condensed.recoCount,
+        aiGenerated: condensed.aiGenerated,
+      };
+    });
 
     return NextResponse.json({ ok: true, data: { submissions } });
   } catch (e) {

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
+import { ApiKeyProvider } from "@/hooks/use-api-key";
 
 // ─── Fonts (same as STRIDE GPT — product-suite parity) ────────────────────────
 const inter = Inter({
@@ -51,7 +52,11 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased bg-background text-foreground`}
       >
-        {children}
+        {/* Session-only OpenAI key provider: hoisted to the root so the key
+            set in the top bar survives client navigation between pages (it
+            previously lived per-page inside AppShell and was lost on every
+            route change — AI never ran after navigating). */}
+        <ApiKeyProvider>{children}</ApiKeyProvider>
         {/* Sonner toast notifications — the only toast system in use. */}
         <Toaster />
       </body>

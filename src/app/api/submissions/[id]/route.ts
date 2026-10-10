@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, handleError } from "@/lib/api-utils";
-import { all, get } from "@/db";
-import type {
-  SubmissionRow,
-  ProjectRow,
-  ReviewerRow,
-  RecommendationRow,
-  StatusHistoryRow,
-} from "@/db/schema";
-import { queryThreats, queryLinksForThreats, enrichThreats } from "@/lib/threat-views";
+import { get } from "@/db";
+import type { SubmissionRow, ProjectRow, ReviewerRow } from "@/db/schema";
+import { parseCondensedReview } from "@/core/condense";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -17,6 +11,14 @@ function notFound(message: string) {
   return NextResponse.json({ ok: false, error: message }, { status: 404 });
 }
 
+/**
+ * GET /api/submissions/[id] — full condensed review detail.
+ *
+ * Returns the stored condensed review (headline, observations, key
+ * recommendations, deterministic posture/STRIDE/top-risks) tagged to its
+ * project and reviewer. Raw per-threat/per-reco rows are no longer persisted,
+ * so this reads solely from `condensed_review_json`.
+ */
 export async function GET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -26,36 +28,43 @@ export async function GET(
   try {
     const { id } = await context.params;
     if (!/^\d+$/.test(id)) {
-      return NextResponse.json({ ok: false, error: "Invalid submission id." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Invalid submission id." },
+        { status: 400 }
+      );
     }
     const submissionId = Number(id);
 
-    const submission = get<SubmissionRow>(`SELECT * FROM submissions WHERE id = ?`, submissionId);
+    const submission = get<SubmissionRow>(
+      `SELECT * FROM submissions WHERE id = ?`,
+      submissionId
+    );
     if (!submission) return notFound("Submission not found.");
 
-    const project = get<ProjectRow>(`SELECT * FROM projects WHERE id = ?`, submission.project_id);
-    const reviewer = get<ReviewerRow>(`SELECT * FROM reviewers WHERE id = ?`, submission.reviewer_id);
-
-    const threats = enrichThreats(queryThreats("t.submission_id = ?", submissionId));
-
-    const recommendations = all<RecommendationRow>(
-      `SELECT * FROM recommendations WHERE submission_id = ? ORDER BY reco_index ASC`,
-      submissionId
+    const project = get<ProjectRow>(
+      `SELECT * FROM projects WHERE id = ?`,
+      submission.project_id
+    );
+    const reviewer = get<ReviewerRow>(
+      `SELECT * FROM reviewers WHERE id = ?`,
+      submission.reviewer_id
     );
 
-    const links = queryLinksForThreats(threats.map((t) => t.id));
-
-    const statusHistory = all<StatusHistoryRow>(
-      `SELECT h.* FROM status_history h
-       JOIN threats t ON t.id = h.threat_id
-       WHERE t.submission_id = ?
-       ORDER BY h.changed_at DESC`,
-      submissionId
-    );
+    const review = parseCondensedReview(submission.condensed_review_json);
 
     return NextResponse.json({
       ok: true,
-      data: { submission, project, reviewer, threats, recommendations, links, statusHistory },
+      data: {
+        id: submission.id,
+        project: project?.name ?? "Unknown project",
+        reviewer: reviewer?.name ?? "Unknown reviewer",
+        reviewDate: submission.review_date,
+        createdAt: submission.created_at,
+        version: submission.version,
+        notes: submission.notes,
+        excelFilename: submission.excel_filename,
+        review,
+      },
     });
   } catch (e) {
     return handleError(e);

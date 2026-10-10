@@ -5,8 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
-  ShieldAlert,
-  MessageSquareText,
   Users,
   Briefcase,
   History,
@@ -21,14 +19,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { BrandMark } from "@/components/brand-mark";
-import { ApiKeyProvider } from "@/hooks/use-api-key";
 import { ApiKeyDialog } from "@/components/api-key-dialog";
 import { cn } from "@/lib/utils";
 
 /**
  * Agent D — application shell (canonical version): sidebar nav + sticky top
- * bar, wrapped in the session ApiKeyProvider. All Agent D/E pages render
- * inside <AppShell>.
+ * bar. The session ApiKeyProvider lives in the root layout (not here), so the
+ * OpenAI key set in the top bar persists across client navigation.
  *
  * Theme parity with STRIDE GPT: `.navbar-solid` top bar, lucide icons only,
  * light theme, no ThemeProvider. Mobile: sidebar collapses to a Sheet.
@@ -36,11 +33,9 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/register", label: "Risk Register", icon: ShieldAlert },
-  { href: "/recommendations", label: "Recommendations", icon: MessageSquareText },
-  { href: "/reviewers", label: "Reviewers", icon: Users },
-  { href: "/portfolio", label: "Portfolio", icon: Briefcase },
   { href: "/timeline", label: "Timeline", icon: History },
+  { href: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { href: "/reviewers", label: "Reviewers", icon: Users },
   { href: "/library", label: "Library", icon: BookMarked },
   { href: "/audit", label: "Audit", icon: ScrollText },
 ];
@@ -172,9 +167,5 @@ function ShellInner({ children }: { children: ReactNode }) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  return (
-    <ApiKeyProvider>
-      <ShellInner>{children}</ShellInner>
-    </ApiKeyProvider>
-  );
+  return <ShellInner>{children}</ShellInner>;
 }

@@ -1,11 +1,9 @@
 /**
- * Agent D — API data-transfer types.
+ * API data-transfer types for the client.
  *
- * These mirror the contracts in BUILD_SPEC.md §2 (Agent C routes). They are
- * defined here rather than importing `@/core/types` because Agent A owns that
- * file and its route-envelope shapes are Agent C's to fix; the UI normalises
- * defensively at each call site so a slightly different envelope does not
- * break rendering.
+ * The platform stores one AI-condensed review per submission; these shapes
+ * mirror what the aggregation routes return. The UI normalises defensively at
+ * each call site so a slightly different envelope does not break rendering.
  */
 
 /* ── Reviewers ─────────────────────────────────────────────────────────────── */
@@ -15,137 +13,125 @@ export interface Reviewer {
   role: string;
 }
 
-/* ── Column mapping ────────────────────────────────────────────────────────── */
-export interface ColumnMapping {
-  ref?: string;
+/* ── Condensed review ──────────────────────────────────────────────────────── */
+export interface RiskPosture {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface TopRisk {
   title: string;
-  description?: string;
-  stride: string;
-  component?: string;
-  mitre?: string;
   risk: string;
-  existingControls?: string;
-  safetyMetrics?: string;
-  severity?: string;
-  owner?: string;
-  dueDate?: string;
-  likelihood?: string;
-  impact?: string;
 }
 
-export interface MappingSuggestion {
-  mapping: ColumnMapping;
-  confidence: "high" | "medium" | "low";
-  notes: string[];
-}
-
-export interface IngestPreview {
-  fingerprint: string;
-  sheets: { name: string; headers: string[]; sampleRows: string[][] }[];
-  suggestedMapping: MappingSuggestion;
-  savedMapping: MappingSuggestion | null;
-}
-
-export interface SubmissionResult {
-  submissionId: number;
+export interface CondensedReview {
+  headline: string;
+  observations: string[];
+  keyRecommendations: string[];
+  riskPosture: RiskPosture;
+  strideCounts: Record<string, number>;
+  topRisks: TopRisk[];
   threatCount: number;
   recoCount: number;
-  mapping: ColumnMapping;
+  aiGenerated: boolean;
+}
+
+/** Submission POST result (intake). */
+export interface SubmissionResult {
+  submissionId: number;
+  version: number;
+  threatCount: number;
+  recoCount: number;
+  aiGenerated: boolean;
   warnings: string[];
 }
 
-/* ── Threats + links ───────────────────────────────────────────────────────── */
-export type ThreatStatus =
-  | "Open"
-  | "In Progress"
-  | "Mitigated"
-  | "Accepted Risk"
-  | "Deferred"
-  | "Rejected/Not Applicable";
-
-export type LinkDecision = "proposed" | "accepted" | "rejected";
-export type Confidence = "High" | "Medium" | "Low";
-
-export interface ThreatLink {
-  id: number;
-  recommendationId: number;
-  recommendationText: string;
-  confidence: Confidence;
-  rationale: string;
-  quote: string;
-  sourceLabel: "From Excel" | "From Reviewer" | "AI-inferred link";
-  decision: LinkDecision;
-  decidedBy: string | null;
-}
-
-export interface Threat {
-  id: number;
-  ref: string;
-  title: string;
-  description: string;
-  stride: string;
-  component: string;
-  mitre: string[];
-  risk: string;
-  severityScore: number | null;
-  existingControls: string;
-  safetyMetrics: string;
-  excelSheet: string;
-  excelRow: number;
-  projectName: string;
-  reviewerName: string;
-  status: ThreatStatus;
-  statusReason: string | null;
-  priorityOverride: string | null;
-  priorityOverrideReason: string | null;
-  rankScore: number | null;
-  rankExplanation: string | null;
-  linkedCount: number;
-  links: ThreatLink[];
-}
-
-export interface ThreatsResponse {
-  threats: Threat[];
-}
-
-export const THREAT_STATUSES: ThreatStatus[] = [
-  "Open",
-  "In Progress",
-  "Mitigated",
-  "Accepted Risk",
-  "Deferred",
-  "Rejected/Not Applicable",
-];
-
-/* ── Dashboard ─────────────────────────────────────────────────────────────── */
+/* ── Dashboard — the shared visibility hub ─────────────────────────────────── */
 export interface NameValue {
   name: string;
   value: number;
 }
 
-export interface DashboardKpis {
-  totalThreats: number;
-  criticalHigh: number;
-  withResponse: number;
-  noResponse: number;
-  unmappedRecos: number;
-  coveragePct: number;
+/** One review as it appears in the dashboard feed. */
+export interface ReviewListItem {
+  id: number;
+  project: string;
+  reviewer: string;
+  reviewDate: string;
+  createdAt: string;
+  headline: string;
+  riskPosture: RiskPosture;
+  threatCount: number;
+  recoCount: number;
+  aiGenerated: boolean;
 }
 
 export interface DashboardData {
-  kpis: DashboardKpis;
+  totals: {
+    reviews: number;
+    threatsReviewed: number;
+    recommendations: number;
+    reviewers: number;
+  };
+  riskPosture: RiskPosture;
   stride: NameValue[];
-  risk: NameValue[];
-  topThreats: {
-    id: number;
-    title: string;
-    risk: string;
-    project: string;
-    score?: number;
-  }[];
-  components: NameValue[];
-  coverage: { withResponse: number; noResponse: number };
-  reviewers: { name: string; threats: number; submissions: number }[];
+  reviewsByReviewer: NameValue[];
+  reviews: ReviewListItem[];
+}
+
+/** Full review detail (drawer / ?review=<id>). */
+export interface ReviewDetail {
+  id: number;
+  project: string;
+  reviewer: string;
+  reviewDate: string;
+  createdAt: string;
+  version: number;
+  notes: string;
+  excelFilename: string;
+  review: CondensedReview;
+}
+
+/* ── Timeline — stock-market-style time series ─────────────────────────────── */
+export interface TimelinePoint {
+  date: string;
+  reviews: number;
+  recommendations: number;
+  cumulativeReviews: number;
+  cumulativeRecommendations: number;
+}
+
+export interface TimelineData {
+  points: TimelinePoint[];
+  reviewers: { name: string; reviews: number }[];
+  totals: { reviews: number; recommendations: number };
+}
+
+/* ── Portfolio ─────────────────────────────────────────────────────────────── */
+export interface PortfolioProject {
+  id: number;
+  name: string;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  reviewCount: number;
+  lastReviewDate: string;
+  trend: { date: string; severe: number }[];
+}
+
+/* ── Reviewers scorecard ───────────────────────────────────────────────────── */
+export interface ReviewerScore {
+  id: number;
+  name: string;
+  role: string;
+  reviews: number;
+  threatsReviewed: number;
+  recommendations: number;
+  riskPosture: RiskPosture;
+  lastActivity: string;
 }
 
 /* ── Audit ─────────────────────────────────────────────────────────────────── */

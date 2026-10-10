@@ -1,14 +1,13 @@
 "use client";
 
 /**
- * /audit — audit log table with entity filter, plus one-click exports:
- * Excel register, evidence-pack JSON, and the printable executive report.
+ * /audit — the governance audit log: who changed what, when and why, with an
+ * entity filter. Submissions are the main recorded action under the
+ * condensed-only model.
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { toast } from "sonner";
-import { ScrollText, Download, FileSpreadsheet, FileJson } from "lucide-react";
+import { ScrollText } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -17,8 +16,6 @@ import {
   LoadingState,
   ErrorState,
 } from "@/components/view-helpers";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -26,7 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 
 interface AuditEntry {
   id: string | number;
@@ -38,23 +34,7 @@ interface AuditEntry {
   detail?: string;
 }
 
-interface SubmissionOption {
-  id: string | number;
-  projectName?: string;
-  reviewerName?: string;
-  version?: number;
-  reviewDate?: string;
-}
-
-const ENTITY_OPTIONS = [
-  "all",
-  "submission",
-  "threat",
-  "recommendation",
-  "link",
-  "status",
-  "library",
-];
+const ENTITY_OPTIONS = ["all", "submission", "library"];
 
 function fmtDateTime(iso: string | undefined): string {
   if (!iso) return "Not provided";
@@ -62,18 +42,8 @@ function fmtDateTime(iso: string | undefined): string {
   return Number.isNaN(d.getTime()) ? "Not provided" : d.toLocaleString();
 }
 
-function download(url: string, filename: string) {
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
 export default function AuditPage() {
   const [entity, setEntity] = useState("all");
-  const [submissionId, setSubmissionId] = useState<string>("");
 
   const auditUrl = useMemo(
     () =>
@@ -87,107 +57,15 @@ export default function AuditPage() {
   );
   const entries = data?.entries ?? [];
 
-  const subsRes = useApi<{ submissions?: SubmissionOption[] }>(
-    "/api/submissions",
-  );
-  const submissions = subsRes.data?.submissions ?? [];
-
-  function exportRegister() {
-    if (!submissionId) {
-      toast.error("Select a submission first");
-      return;
-    }
-    download(
-      `/api/export/register?submissionId=${encodeURIComponent(submissionId)}`,
-      `risk-register-${submissionId}.xlsx`,
-    );
-    toast.success("Excel register download started");
-  }
-
-  function exportAuditPack() {
-    if (!submissionId) {
-      toast.error("Select a submission first");
-      return;
-    }
-    download(
-      `/api/export/audit-pack?submissionId=${encodeURIComponent(submissionId)}`,
-      `audit-pack-${submissionId}.json`,
-    );
-    toast.success("Evidence pack download started");
-  }
-
   return (
     <AppShell>
       <PageHeader
         eyebrow="Governance"
-        title="Audit & exports"
-        hint="Who changed what, when and why — plus the evidence exports: the Excel register, the audit pack, and the printable executive report."
+        title="Audit"
+        hint="Who changed what, when and why — every submission and library change is recorded here."
       />
 
-      {/* Exports */}
-      <div className="apple-card mb-6 p-5">
-        <p className="text-eyebrow mb-4 text-muted-foreground">
-          Exports — pick a submission
-        </p>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-64">
-            <Label htmlFor="audit-submission">Submission</Label>
-            <Select value={submissionId} onValueChange={setSubmissionId}>
-              <SelectTrigger id="audit-submission" className="mt-1.5">
-                <SelectValue placeholder="Select a submission…" />
-              </SelectTrigger>
-              <SelectContent>
-                {submissions.map((s) => (
-                  <SelectItem key={String(s.id)} value={String(s.id)}>
-                    {s.projectName || "Untitled"}
-                    {typeof s.version === "number" ? ` · v${s.version}` : ""}
-                    {s.reviewerName ? ` · ${s.reviewerName}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button
-            variant="outline"
-            className="rounded-full"
-            onClick={exportRegister}
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            Excel register
-          </Button>
-          <Button
-            variant="outline"
-            className="rounded-full"
-            onClick={exportAuditPack}
-          >
-            <FileJson className="h-4 w-4" />
-            Evidence pack (JSON)
-          </Button>
-          {submissionId ? (
-            <Button asChild variant="outline" className="rounded-full">
-              <Link href={`/report/${submissionId}`}>
-                <Download className="h-4 w-4" />
-                Printable report
-              </Link>
-            </Button>
-          ) : (
-            <Button variant="outline" className="rounded-full" disabled>
-              <Download className="h-4 w-4" />
-              Printable report
-            </Button>
-          )}
-        </div>
-        {!subsRes.loading && submissions.length === 0 && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            No submissions yet — exports will be available once a submission is
-            processed.
-          </p>
-        )}
-      </div>
-
-      <Separator className="mb-6" />
-
-      {/* Audit log */}
+      {/* Entity filter */}
       <div className="apple-card mb-4 flex flex-wrap items-center gap-3 p-4">
         <ScrollText className="h-4 w-4 text-muted-foreground" />
         <Select value={entity} onValueChange={setEntity}>
@@ -214,7 +92,7 @@ export default function AuditPage() {
         <EmptyState
           icon={ScrollText}
           title="No audit entries"
-          hint="Every submission, status change, link decision and override is recorded here."
+          hint="Every submission and library change is recorded here."
         />
       )}
 

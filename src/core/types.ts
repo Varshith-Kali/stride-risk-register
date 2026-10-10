@@ -85,3 +85,26 @@ export interface ProposedLink {
   /** Exact span quoted from the source text (reco or threat). */
   quote: string;
 }
+
+/**
+ * One review, condensed. Stored as JSON on the submission row — raw per-threat
+ * and per-reco rows are not persisted (there will be thousands of reviews).
+ *
+ * Split of responsibility:
+ *  - AI (grounded, no numbers): headline, observations, keyRecommendations.
+ *  - Code (deterministic, never invented): riskPosture, strideCounts, topRisks,
+ *    threatCount, recoCount.
+ *  - aiGenerated: false when no API key was supplied (or the AI call failed) —
+ *    the record still carries the deterministic posture, just no narrative.
+ */
+export interface CondensedReview {
+  headline: string;
+  observations: string[];
+  keyRecommendations: string[];
+  riskPosture: { critical: number; high: number; medium: number; low: number };
+  strideCounts: Record<StrideCategory, number>;
+  topRisks: { title: string; risk: RiskLevel }[];
+  threatCount: number;
+  recoCount: number;
+  aiGenerated: boolean;
+}

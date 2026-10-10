@@ -1,220 +1,103 @@
 /**
  * LLM system prompts and prompt builders.
  *
+ * This platform makes EXACTLY ONE AI call per upload: the "condense" call,
+ * which clubs a review's raw threat rows + recommendations into a short,
+ * grounded, high-level review record. Everything else (risk posture, STRIDE
+ * counts, totals) is computed deterministically in code — never asked of the
+ * model.
+ *
  * Style mirrors STRIDE GPT's stride-engine.ts:
  *   - a professional system instruction (top-level `instructions` field),
  *   - compact line-based context blocks (not prose) to keep token costs low,
- *   - every user prompt ends with "Return ONLY a JSON object ..." plus an
- *     inline schema sketch using literal enum pipes,
- *   - the API root is always an object with a named key (json_object mode
- *     never returns a bare array).
+ *   - the prompt ends with "Return ONLY a JSON object ..." plus an inline
+ *     schema sketch (json_object mode never returns a bare array).
  *
- * No-hallucination rule (product-critical): prompts forbid inventing
- * threats, recommendations, scores, owners or dates, and require every
- * mapping link to quote the exact source text span.
+ * No-hallucination rule (product-critical): the prompt forbids inventing
+ * threats, recommendations, scores, owners, dates or counts. Observations must
+ * derive from the supplied threats; key recommendations must come from the
+ * supplied recommendations.
  */
 
 import { sanitizeForPrompt } from "@/llm/openai";
 
-// ─── Threat ⇄ Recommendation mapping ─────────────────────────────────────────
+// ─── Condensed review (the single AI call) ───────────────────────────────────
 
-export const MAP_SYSTEM =
-  "You are a security architecture analyst. Map reviewer recommendations to " +
-  "threats using ONLY the provided input. Never invent threats, " +
-  "recommendations, scores, owners or dates. Every link must quote the exact " +
-  "source text span.";
+export const CONDENSE_SYSTEM =
+  "You are a security architecture analyst condensing one threat-model review " +
+  "for a shared observability dashboard. Produce a short, high-level summary " +
+  "grounded STRICTLY in the threats and recommendations provided. Never invent " +
+  "threats, recommendations, controls, standards, owners, dates or numbers. Do " +
+  "not output counts or scores — those are computed separately.";
 
-export interface MapThreatInput {
-  row: number; // 1-based Excel row (header = row 1)
+export interface CondenseThreatInput {
   title: string;
   description: string;
   stride: string;
   risk: string;
+  component: string;
 }
 
-export interface MapRecoInput {
-  index: number; // 0-based recommendation index
+export interface CondenseRecoInput {
+  index: number; // 1-based recommendation index
   text: string;
 }
 
-/** Per-call input budgets for the mapping prompt. */
-export const MAX_MAP_THREATS_PER_CALL = 60;
-export const MAX_MAP_RECOS_PER_CALL = 40;
+/** Input budgets for the single condense call (keeps the prompt in budget). */
+export const MAX_CONDENSE_THREATS = 50;
+export const MAX_CONDENSE_RECOS = 60;
 
-const MAP_RULES = [
+const CONDENSE_RULES = [
   "Rules:",
-  "- A recommendation may link to multiple threats, and a threat may link to multiple recommendations (many-to-many).",
-  "- confidence must be exactly one of: High | Medium | Low.",
-  "- rationale is ONE sentence explaining why the recommendation addresses the threat.",
-  "- quote must be an EXACT substring of the recommendation text or the threat text shown below. Copy it verbatim — do not paraphrase, shorten, or clean it up.",
-  "- If a recommendation cannot be tied to any threat, OMIT it entirely (do not force a link).",
-  "- If a threat has no matching recommendation, OMIT it entirely (do not invent one).",
+  "- headline: ONE sentence (max ~160 chars) describing the overall security posture of THIS review, grounded in the threats below.",
+  "- observations: 3–6 short bullets capturing the most important high-level findings across the threats. Group/club related threats rather than listing them one by one. Each bullet derives from the threats shown below.",
+  "- keyRecommendations: club the reviewer recommendations below into 3–6 high-level action items. Preserve their meaning; do not invent new recommendations. If no recommendations are provided, return an empty array.",
   "- Use ONLY the input below. Never invent threats, recommendations, scores, owners, dates, controls, or standards.",
+  "- Do NOT include any counts, totals, percentages or numeric scores — those are computed separately.",
 ].join("\n");
 
-const MAP_SHAPE =
-  'Return ONLY a JSON object (no prose, no markdown fences) with this exact shape:\n' +
-  '{ "links": [{ "threatRow": 0, "recoIndex": 0, "confidence": "High | Medium | Low", "rationale": "...", "quote": "..." }] }';
+const CONDENSE_SHAPE =
+  "Return ONLY a JSON object (no prose, no markdown fences) with this exact shape:\n" +
+  '{ "headline": "...", "observations": ["..."], "keyRecommendations": ["..."] }';
 
 /**
- * Build the mapping prompt. Returns the prompt text plus a flag indicating
- * whether the input exceeded the per-call budget (caller decides how to
- * chunk; see the /api/ai/map route).
+ * Build the condense prompt from the (already capped by the caller) top
+ * threats and recommendations. The caller feeds the top ~50 threats by rank
+ * score; deterministic counts are computed over the FULL set, not here.
  */
-export function buildMapPrompt(
-  threats: MapThreatInput[],
-  recos: MapRecoInput[]
-): { prompt: string; truncated: boolean } {
-  const truncated =
-    threats.length > MAX_MAP_THREATS_PER_CALL ||
-    recos.length > MAX_MAP_RECOS_PER_CALL;
-
+export function buildCondensePrompt(
+  threats: CondenseThreatInput[],
+  recos: CondenseRecoInput[]
+): string {
   const threatLines = threats
-    .slice(0, MAX_MAP_THREATS_PER_CALL)
+    .slice(0, MAX_CONDENSE_THREATS)
     .map((t) => {
-      const row = Number.isInteger(t.row) ? t.row : 0;
-      const title = sanitizeForPrompt(t.title, 300);
+      const title = sanitizeForPrompt(t.title, 200);
       const desc = sanitizeForPrompt(t.description, 300);
       const stride = sanitizeForPrompt(t.stride, 40) || "Not provided";
       const risk = sanitizeForPrompt(t.risk, 20) || "Not provided";
-      return `- T${row} [${stride} | ${risk}] ${title}${desc ? " — " + desc : ""}`;
+      const component = sanitizeForPrompt(t.component, 120);
+      const head = `- [${stride} | ${risk}]${component ? " (" + component + ")" : ""} ${title}`;
+      return desc ? `${head} — ${desc}` : head;
     })
     .join("\n");
 
   const recoLines = recos
-    .slice(0, MAX_MAP_RECOS_PER_CALL)
+    .slice(0, MAX_CONDENSE_RECOS)
     .map((r) => `- R${r.index}: ${sanitizeForPrompt(r.text, 500)}`)
     .join("\n");
 
-  const prompt = [
-    "Map each reviewer recommendation to the threat(s) it addresses.",
-    "",
-    "THREATS (from the STRIDE threat-model Excel export):",
-    threatLines || "(none)",
-    "",
-    "RECOMMENDATIONS (from the architecture reviewer):",
-    recoLines || "(none)",
-    "",
-    MAP_RULES,
-    "",
-    MAP_SHAPE,
-  ].join("\n");
-
-  return { prompt, truncated };
-}
-
-// ─── Executive summary ───────────────────────────────────────────────────────
-
-export const SUMMARY_SYSTEM =
-  "You are a security architecture analyst writing for executives. " +
-  "Summarize ONLY what the numbers below state. Never invent threats, dates, " +
-  "owners, controls, or trends that are not in the input.";
-
-export interface SummaryKpis {
-  totalThreats: number | null;
-  criticalHighCount: number | null;
-  withReviewerResponse: number | null;
-  unmappedThreats: number | null;
-  unmappedRecommendations: number | null;
-  coveragePct: number | null;
-}
-
-export interface SummaryThreat {
-  ref: string;
-  title: string;
-  risk: string;
-}
-
-const MAX_SUMMARY_THREATS = 15;
-
-const SUMMARY_RULES = [
-  "Rules:",
-  "- Write a 5–8 sentence executive summary grounded STRICTLY in the numbers below.",
-  "- Every sentence must be traceable to a number below. If a number is missing, write 'Not provided' for that fact.",
-  "- Do not offer recommendations, mitigations, or next steps beyond what the data states.",
-  "- traceNotes: one short note per summary sentence naming the number it relies on, e.g. 'Sentence 1 uses TOTAL_THREATS=24 and CRITICAL_HIGH=7'.",
-].join("\n");
-
-const SUMMARY_SHAPE =
-  'Return ONLY a JSON object (no prose, no markdown fences) with this exact shape:\n' +
-  '{ "summary": "...", "traceNotes": ["..."] }';
-
-function fmtNum(v: number | null): string {
-  return v === null || v === undefined || Number.isNaN(v) ? "Not provided" : String(v);
-}
-
-export function buildSummaryPrompt(
-  kpis: SummaryKpis,
-  topThreats: SummaryThreat[]
-): string {
-  const kpiLines = [
-    `TOTAL_THREATS=${fmtNum(kpis.totalThreats)}`,
-    `CRITICAL_HIGH=${fmtNum(kpis.criticalHighCount)}`,
-    `WITH_REVIEWER_RESPONSE=${fmtNum(kpis.withReviewerResponse)}`,
-    `UNMAPPED_THREATS=${fmtNum(kpis.unmappedThreats)}`,
-    `UNMAPPED_RECOMMENDATIONS=${fmtNum(kpis.unmappedRecommendations)}`,
-    `COVERAGE_PCT=${fmtNum(kpis.coveragePct)}`,
-  ].join("\n");
-
-  const threatLines = topThreats
-    .slice(0, MAX_SUMMARY_THREATS)
-    .map((t) => {
-      const ref = sanitizeForPrompt(t.ref, 20) || "Not provided";
-      const title = sanitizeForPrompt(t.title, 120);
-      const risk = sanitizeForPrompt(t.risk, 20) || "Not provided";
-      return `- ${ref} [${risk}] ${title}`;
-    })
-    .join("\n");
-
   return [
-    "Write an executive summary of this risk register snapshot.",
+    "Condense this threat-model review into a short, high-level summary.",
     "",
-    "REGISTER NUMBERS:",
-    kpiLines,
-    "",
-    "TOP-RANKED THREATS (by rank):",
+    "THREATS (from the STRIDE threat-model Excel export, highest-risk first):",
     threatLines || "(none provided)",
     "",
-    SUMMARY_RULES,
+    "REVIEWER RECOMMENDATIONS:",
+    recoLines || "(none provided)",
     "",
-    SUMMARY_SHAPE,
-  ].join("\n");
-}
-
-// ─── Grounded Q&A over the register ──────────────────────────────────────────
-
-export const ASK_SYSTEM =
-  "You are a security architecture analyst answering questions about a risk " +
-  "register. Answer ONLY from the register context provided. Cite threat refs " +
-  "like [T-003] for every factual claim. If the answer is not in the context, " +
-  "say so plainly — never invent data.";
-
-const ASK_RULES = [
-  "Rules:",
-  "- Answer ONLY from the REGISTER CONTEXT below. If the answer is not in the context, say 'Not in the provided context.'",
-  "- Cite the threat ref (e.g. [T-003]) for every factual claim about a threat.",
-  "- Never invent threats, recommendations, scores, owners, dates, or statuses.",
-  "- citations: list every threat ref cited in the answer (e.g. [\"T-003\"]). Empty array if none.",
-].join("\n");
-
-const ASK_SHAPE =
-  'Return ONLY a JSON object (no prose, no markdown fences) with this exact shape:\n' +
-  '{ "answer": "...", "citations": ["T-003"] }';
-
-/**
- * Build the Q&A prompt. The context JSON is capped server-side by the route;
- * the builder sanitizes the question and assembles the final prompt.
- */
-export function buildAskPrompt(question: string, contextJson: string): string {
-  const q = sanitizeForPrompt(question, 2000);
-  return [
-    `QUESTION: ${q}`,
+    CONDENSE_RULES,
     "",
-    "REGISTER CONTEXT (threats, recommendations, and their links):",
-    contextJson,
-    "",
-    ASK_RULES,
-    "",
-    ASK_SHAPE,
+    CONDENSE_SHAPE,
   ].join("\n");
 }

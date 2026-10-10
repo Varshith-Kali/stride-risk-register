@@ -158,6 +158,14 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 2,
+    description:
+      "Store one AI-condensed review per submission (observability model); raw per-threat/per-reco rows are no longer persisted",
+    sql: `
+      ALTER TABLE submissions ADD COLUMN condensed_review_json TEXT NOT NULL DEFAULT '{}';
+    `,
+  },
 ];
 
 /* ─── Row types (what comes back from the DB) ─────────────────────────────── */
@@ -172,6 +180,8 @@ export interface SubmissionRow {
   id: number; project_id: number; reviewer_id: number; review_date: string;
   notes: string; excel_filename: string; excel_fingerprint: string;
   version: number; mapping_json: string; created_at: string;
+  /** JSON (CondensedReview) — the AI-condensed + deterministic review record. */
+  condensed_review_json: string;
 }
 export interface ThreatRow {
   id: number; submission_id: number; excel_sheet: string; excel_row: number;

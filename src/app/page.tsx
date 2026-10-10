@@ -1,22 +1,14 @@
 "use client";
 
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
-  ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  FileSpreadsheet,
-  Info,
   Loader2,
+  Sparkles,
   TriangleAlert,
   Upload,
 } from "lucide-react";
@@ -33,51 +25,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiGet, apiPost, apiPostForm } from "@/lib/api-client";
+import { apiGet, apiPostForm } from "@/lib/api-client";
 import { aiConfig, useApiKey } from "@/hooks/use-api-key";
-import type {
-  ColumnMapping,
-  IngestPreview,
-  Reviewer,
-  SubmissionResult,
-} from "@/lib/dto";
+import type { Reviewer, SubmissionResult } from "@/lib/dto";
 
 /**
- * Agent D — intake wizard ("/").
+ * Intake wizard ("/").
  *
  * Step 1: upload the STRIDE GPT .xlsx export, enter submission metadata
- * (project name, mandatory reviewer, review date, notes) and paste the
- * reviewer's recommendations.
- * Step 2: column-mapping preview — confirm/correct how Excel headers map to
- * platform fields (values are exact Excel header names). The mapping is
- * remembered per header fingerprint.
- * Step 3: processing → redirects to /dashboard?submission=<id>.
+ * (project, mandatory reviewer, review date, notes) and paste the reviewer's
+ * recommendations. Columns are auto-detected — no mapping step.
+ * Step 2: processing — one AI call condenses the review, then we redirect to
+ * /dashboard?review=<id>.
  */
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
-
-const PLATFORM_FIELDS: {
-  key: keyof ColumnMapping;
-  label: string;
-  required: boolean;
-}[] = [
-  { key: "ref", label: "Threat ID / S.No", required: false },
-  { key: "title", label: "Threat title", required: true },
-  { key: "description", label: "Description", required: false },
-  { key: "stride", label: "STRIDE category", required: true },
-  { key: "component", label: "Component / Asset", required: false },
-  { key: "mitre", label: "MITRE ATT&CK", required: false },
-  { key: "risk", label: "Risk level", required: true },
-  { key: "existingControls", label: "Existing controls", required: false },
-  { key: "safetyMetrics", label: "Safety metrics", required: false },
-  { key: "severity", label: "Severity / DREAD score", required: false },
-  { key: "owner", label: "Owner", required: false },
-  { key: "dueDate", label: "Due date", required: false },
-  { key: "likelihood", label: "Likelihood", required: false },
-  { key: "impact", label: "Impact", required: false },
-];
 
 function localToday(): string {
   const d = new Date();
@@ -87,7 +50,7 @@ function localToday(): string {
 }
 
 function StepHeader({ step }: { step: number }) {
-  const steps = ["Upload & metadata", "Column mapping", "Processing"];
+  const steps = ["Upload & metadata", "Processing"];
   return (
     <ol className="flex items-center gap-2" aria-label="Submission steps">
       {steps.map((label, i) => {
@@ -120,6 +83,8 @@ function StepHeader({ step }: { step: number }) {
   );
 }
 
+// APPEND_MARKER
+
 function IntakeWizard() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -127,27 +92,18 @@ function IntakeWizard() {
 
   const [step, setStep] = useState(1);
 
-  // ── Step 1 state ──
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [reviewerName, setReviewerName] = useState("");
   const [reviewDate, setReviewDate] = useState(localToday());
   const [notes, setNotes] = useState("");
-  // Library "reuse" → pre-fill recommendations (?reco=); read once via lazy
-  // initializer — no sync effect needed.
   const [recommendations, setRecommendations] = useState(
     () => searchParams.get("reco") ?? "",
   );
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const [reviewersLoading, setReviewersLoading] = useState(true);
   const [reviewersError, setReviewersError] = useState<string | null>(null);
-  const [parsing, setParsing] = useState(false);
-
-  // ── Step 2 state ──
-  const [preview, setPreview] = useState<IngestPreview | null>(null);
-  const [sheetName, setSheetName] = useState("");
-  const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submission, setSubmission] = useState<SubmissionResult | null>(null);
   const { apiKey, model } = useApiKey();
@@ -190,12 +146,7 @@ function IntakeWizard() {
     setFile(f);
   }, []);
 
-  const headers =
-    preview?.sheets.find((s) => s.name === sheetName)?.headers ??
-    preview?.sheets[0]?.headers ??
-    [];
-
-  async function startPreview() {
+  async function submit() {
     if (!file) {
       toast.error("Upload the STRIDE GPT .xlsx export first.");
       return;
@@ -204,48 +155,8 @@ function IntakeWizard() {
       toast.error("Reviewer selection is mandatory.");
       return;
     }
-    setParsing(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const data = await apiPostForm<IngestPreview>(
-        "/api/ingest/preview",
-        fd,
-      );
-      setPreview(data);
-      setSheetName(data.sheets[0]?.name ?? "");
-      setMapping(data.savedMapping?.mapping ?? data.suggestedMapping.mapping);
-      setStep(2);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Preview failed");
-    } finally {
-      setParsing(false);
-    }
-  }
-
-  function setMappingField(key: keyof ColumnMapping, value: string) {
-    setMapping((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev };
-      if (!value) delete next[key];
-      else (next as Record<string, string>)[key] = value;
-      return next;
-    });
-  }
-
-  const mappingValid =
-    !!mapping?.title?.trim() && !!mapping?.stride?.trim() && !!mapping?.risk?.trim();
-
-  async function confirmAndSubmit() {
-    if (!file || !mapping) return;
-    if (!mappingValid) {
-      toast.error(
-        "Map the required fields: Threat title, STRIDE category, Risk level.",
-      );
-      return;
-    }
     setSubmitting(true);
-    setStep(3);
+    setStep(2);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -254,115 +165,44 @@ function IntakeWizard() {
       fd.append("reviewDate", reviewDate);
       fd.append("notes", notes);
       fd.append("recommendationsText", recommendations);
-      fd.append("mappingJson", JSON.stringify(mapping));
+      // AI config travels only in this request body — never persisted. Omitted
+      // when no session key is set → the review is condensed deterministically.
+      if (apiKey) {
+        fd.append("config", JSON.stringify(aiConfig(apiKey, model)));
+      }
       const data = await apiPostForm<SubmissionResult>("/api/submissions", fd);
       setSubmission(data);
       data.warnings.forEach((w) => toast.warning(w, { duration: 6000 }));
       toast.success(
-        `Submission saved: ${data.threatCount} threats, ${data.recoCount} recommendations.`,
+        `Review condensed: ${data.threatCount} threats, ${data.recoCount} recommendations.`,
       );
-      // ── AI threat↔recommendation mapping (human-in-the-loop: links are
-      // stored as `proposed`; the reviewer accepts/rejects them in the
-      // register). Runs only when a session API key is present.
-      if (apiKey && data.threatCount > 0 && data.recoCount > 0) {
-        try {
-          const linked = await runAiMapping(data.submissionId);
-          if (linked > 0) {
-            toast.success(
-              `AI proposed ${linked} threat↔recommendation link${linked === 1 ? "" : "s"} — review them in the register.`,
-              { duration: 8000 },
-            );
-          } else {
-            toast.info(
-              "AI found no confident threat↔recommendation links — link them manually in the register.",
-              { duration: 8000 },
-            );
-          }
-        } catch (err) {
-          toast.warning(
-            `AI mapping skipped (${err instanceof Error ? err.message : "mapping failed"}) — you can link manually.`,
-            { duration: 8000 },
-          );
-        }
-      } else if (!apiKey && data.recoCount > 0) {
+      if (!apiKey) {
         toast.info(
-          "Tip: set your OpenAI API key (top bar) to auto-map threats ↔ recommendations with AI.",
+          "Tip: set your OpenAI API key (top bar) to generate AI observations for each review.",
           { duration: 8000 },
         );
       }
-      router.push(`/dashboard?submission=${data.submissionId}`);
+      router.push(`/dashboard?review=${data.submissionId}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Submission failed");
-      setStep(2);
+      setStep(1);
     } finally {
       setSubmitting(false);
     }
   }
-
-  /**
-   * Fetch the stored submission, ask the AI to propose threat↔recommendation
-   * links (with quotes + confidence), and persist them as `proposed`.
-   * Returns the number of links stored.
-   */
-  async function runAiMapping(submissionId: number): Promise<number> {
-    const detail = await apiGet<{
-      threats: {
-        excel_row: number;
-        title: string;
-        description: string;
-        stride_category: string;
-        risk_level: string;
-      }[];
-      recommendations: { reco_index: number; text: string }[];
-    }>(`/api/submissions/${submissionId}`);
-    const threats = (detail.threats ?? []).map((t) => ({
-      row: t.excel_row,
-      title: t.title,
-      description: t.description,
-      stride: t.stride_category,
-      risk: t.risk_level,
-    }));
-    const recos = (detail.recommendations ?? []).map((r) => ({
-      index: r.reco_index,
-      text: r.text,
-    }));
-    if (threats.length === 0 || recos.length === 0) return 0;
-    const mapRes = await apiPost<{
-      links: {
-        threatRow: number;
-        recoIndex: number;
-        confidence: string;
-        rationale: string;
-        quote: string;
-      }[];
-    }>("/api/ai/map", {
-      config: aiConfig(apiKey, model),
-      threats,
-      recos,
-    });
-    const links = mapRes.links ?? [];
-    if (links.length === 0) return 0;
-    const bulkRes = await apiPost<{ created: number; skipped: number }>(
-      "/api/links/bulk",
-      { submissionId, links },
-    );
-    return bulkRes.created;
-  }
-
-  const suggested = preview?.suggestedMapping;
-  const saved = preview?.savedMapping;
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
       <div>
         <p className="text-eyebrow text-muted-foreground">New submission</p>
         <h1 className="text-headline tracking-tight">
-          From threat model to governed register
+          From threat model to a condensed review
         </h1>
         <p className="mt-2 max-w-2xl text-muted-foreground">
           Upload a STRIDE GPT Excel export, choose the reviewer, paste their
-          post-review recommendations — the platform ranks, links and
-          visualises everything with full traceability.
+          post-review recommendations — the platform auto-detects the columns
+          and condenses everything into one high-level, reviewer-tagged review
+          on the dashboard.
         </p>
       </div>
 
@@ -397,8 +237,7 @@ function IntakeWizard() {
                 {file ? file.name : "Drop the STRIDE GPT export here, or click to browse"}
               </span>
               <span className="text-xs text-muted-foreground">
-                .xlsx only · max 10 MB · all sheets are parsed, rows keep their
-                original numbers
+                .xlsx only · max 10 MB · columns are auto-detected
               </span>
             </button>
             <input
@@ -482,173 +321,45 @@ function IntakeWizard() {
             <Textarea
               id="recommendations"
               rows={8}
-              placeholder={"Paste the post-architecture-review recommendations here — numbered, bulleted or paragraphs.\n\nOnly what is written will be used. Nothing is inferred or invented."}
+              placeholder={"Paste the post-architecture-review recommendations here — numbered, bulleted or paragraphs.\n\nThey are clubbed into a few high-level key recommendations. Nothing is invented."}
               value={recommendations}
               onChange={(e) => setRecommendations(e.target.value)}
               className="font-mono text-sm"
             />
-            <p className="text-xs text-muted-foreground">
-              Each recommendation is kept atomic with its original wording, then
-              linked to threats with a quoted evidence span and a confidence
-              level.
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Sparkles className="h-3.5 w-3.5" />
+              {apiKey
+                ? "One AI call condenses this review into grounded observations and key recommendations."
+                : "No API key set — the review will be stored with its risk posture only (no AI observations)."}
             </p>
           </div>
 
           <div className="flex justify-end">
             <Button
-              onClick={startPreview}
-              disabled={parsing || !file || !reviewerName}
+              onClick={submit}
+              disabled={submitting || !file || !reviewerName}
               size="lg"
             >
-              {parsing && <Loader2 className="h-4 w-4 animate-spin" />}
-              Continue to column mapping
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              Condense &amp; save review
               <ArrowRight className="h-4 w-4" />
             </Button>
           </div>
         </div>
       )}
 
-      {step === 2 && preview && mapping && (
-        <div className="space-y-6">
-          {saved && (
-            <div className="apple-card flex flex-wrap items-center gap-3 p-4">
-              <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <p className="flex-1 text-sm">
-                A mapping was saved for this exact file layout — it has been
-                applied. Adjust anything below before confirming.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setMapping(suggested?.mapping ?? mapping)}
-              >
-                Use suggested instead
-              </Button>
-            </div>
-          )}
-
-          <div className="apple-card p-6 sm:p-8">
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <h2 className="text-title">Column mapping</h2>
-              <Badge variant="secondary">
-                <FileSpreadsheet className="h-3 w-3" />
-                {file?.name}
-              </Badge>
-              {preview.sheets.length > 1 && (
-                <Select value={sheetName} onValueChange={setSheetName}>
-                  <SelectTrigger className="w-48">
-                    <SelectValue placeholder="Sheet" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {preview.sheets.map((s) => (
-                      <SelectItem key={s.name} value={s.name}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              {suggested && (
-                <Badge variant="outline" className="ml-auto">
-                  auto-detect confidence: {suggested.confidence}
-                </Badge>
-              )}
-            </div>
-
-            {suggested?.notes?.length ? (
-              <ul className="mb-4 space-y-1 rounded-xl bg-muted p-3 text-xs text-muted-foreground">
-                {suggested.notes.map((n, i) => (
-                  <li key={i}>· {n}</li>
-                ))}
-              </ul>
-            ) : null}
-
-            <div className="overflow-x-auto rounded-xl border border-border">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/60 text-left">
-                    <th className="px-4 py-2.5 font-medium">Platform field</th>
-                    <th className="px-4 py-2.5 font-medium">Excel column</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {PLATFORM_FIELDS.map((f) => (
-                    <tr
-                      key={f.key}
-                      className="border-b border-border last:border-0"
-                    >
-                      <td className="px-4 py-2.5">
-                        <span className="font-medium">{f.label}</span>{" "}
-                        {f.required && (
-                          <Badge variant="destructive" className="ml-1">
-                            required
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <Select
-                          value={mapping[f.key] ?? ""}
-                          onValueChange={(v) =>
-                            setMappingField(f.key, v === "__none__" ? "" : v)
-                          }
-                        >
-                          <SelectTrigger className="w-full sm:w-72">
-                            <SelectValue placeholder="— Not mapped —" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">
-                              — Not mapped —
-                            </SelectItem>
-                            {headers.map((h) => (
-                              <SelectItem key={h} value={h}>
-                                {h}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Column values must be the Excel header names exactly as they
-              appear. Fields left unmapped show as “Not provided” in the
-              register — nothing is invented.
-            </p>
-
-            <div className="mt-6 flex items-center justify-between">
-              <Button variant="outline" onClick={() => setStep(1)}>
-                <ArrowLeft className="h-4 w-4" />
-                Back
-              </Button>
-              <Button
-                onClick={confirmAndSubmit}
-                disabled={submitting || !mappingValid}
-                size="lg"
-              >
-                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                Confirm &amp; process
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {step === 3 && (
+      {step === 2 && (
         <div className="apple-card flex flex-col items-center gap-4 p-12 text-center">
           <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
-          <h2 className="text-title">Processing submission…</h2>
+          <h2 className="text-title">Condensing review…</h2>
           <p className="max-w-md text-sm text-muted-foreground">
-            Parsing the workbook, splitting recommendations, mapping
-            threats ↔ recommendations with quoted evidence, and ranking
-            everything transparently. You&apos;ll land on the executive
-            overview when it&apos;s done.
+            Parsing the workbook, computing the risk posture, and condensing the
+            threats and recommendations into one high-level review. You&apos;ll
+            land on the dashboard when it&apos;s done.
           </p>
           {submission && (
             <p className="text-sm text-muted-foreground">
-              Submission #{submission.submissionId} saved.
+              Review #{submission.submissionId} saved.
             </p>
           )}
         </div>

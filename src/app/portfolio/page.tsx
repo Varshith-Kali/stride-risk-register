@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * /portfolio — all projects side by side: risk posture, open items,
- * accepted-risk count, last review date, and an open-count trend sparkline.
+ * /portfolio — every project side by side: latest risk posture, review count,
+ * last review date, and a sparkline of severe (critical + high) threats across
+ * versions. Derived entirely from stored condensed reviews.
  */
 
 import Link from "next/link";
-import { Layers, CalendarDays, ShieldCheck } from "lucide-react";
+import { Layers, CalendarDays, ClipboardList } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState } from "@/components/empty-state";
@@ -19,22 +20,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { RISK_COLORS } from "@/lib/risk";
-
-interface TrendPoint {
-  date?: string;
-  openCount?: number;
-}
-
-interface PortfolioProject {
-  id: string | number;
-  name?: string;
-  criticalCount?: number;
-  highCount?: number;
-  openCount?: number;
-  acceptedRiskCount?: number;
-  lastReviewDate?: string;
-  trend?: TrendPoint[];
-}
+import type { PortfolioProject } from "@/lib/dto";
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return "Not provided";
@@ -54,7 +40,7 @@ export default function PortfolioPage() {
       <PageHeader
         eyebrow="Portfolio visibility"
         title="Portfolio"
-        hint="Every project side by side — risk posture, open items, accepted risks and how the open count has moved over time."
+        hint="Every project side by side — latest risk posture, how many reviews it has had, and how its severe-threat count has moved across versions."
       />
 
       {loading && (
@@ -70,7 +56,7 @@ export default function PortfolioPage() {
         <EmptyState
           icon={Layers}
           title="No projects yet"
-          hint="Projects appear here once submissions are processed from the intake page."
+          hint="Projects appear here once reviews are submitted from the intake page."
           action={
             <Link
               href="/"
@@ -87,90 +73,89 @@ export default function PortfolioPage() {
           {projects.map((p) => {
             const trend = (p.trend ?? []).map((t, i) => ({
               i,
-              openCount: t.openCount ?? 0,
+              severe: t.severe ?? 0,
             }));
             return (
-              <Link
-                key={String(p.id)}
-                href={`/register?project=${encodeURIComponent(p.name ?? "")}`}
-                className="block"
-              >
-                <Card className="apple-card h-full cursor-pointer">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-title truncate">
-                      {p.name || "Not provided"}
-                    </CardTitle>
-                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <CalendarDays className="h-3.5 w-3.5" />
-                      Last review: {fmtDate(p.lastReviewDate)}
+              <Card key={String(p.id)} className="apple-card h-full">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-title truncate">
+                    {p.name || "Not provided"}
+                  </CardTitle>
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    Last review: {fmtDate(p.lastReviewDate)}
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Risk posture */}
+                  <div className="flex flex-wrap gap-2">
+                    <Badge
+                      variant="outline"
+                      className="border-transparent text-white"
+                      style={{ backgroundColor: RISK_COLORS.Critical }}
+                    >
+                      {p.criticalCount ?? 0} critical
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="border-transparent text-white"
+                      style={{ backgroundColor: RISK_COLORS.High }}
+                    >
+                      {p.highCount ?? 0} high
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="border-transparent text-white"
+                      style={{ backgroundColor: RISK_COLORS.Medium }}
+                    >
+                      {p.mediumCount ?? 0} medium
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="border-transparent text-white"
+                      style={{ backgroundColor: RISK_COLORS.Low }}
+                    >
+                      {p.lowCount ?? 0} low
+                    </Badge>
+                  </div>
+
+                  {/* Severe-threat trend sparkline */}
+                  <div>
+                    <p className="text-eyebrow mb-1 text-muted-foreground">
+                      Severe threats (critical + high) trend
                     </p>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {/* Risk posture */}
-                    <div className="flex flex-wrap gap-2">
-                      <Badge
-                        variant="outline"
-                        className="border-transparent text-white"
-                        style={{ backgroundColor: RISK_COLORS.Critical }}
-                      >
-                        {p.criticalCount ?? 0} critical
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className="border-transparent text-white"
-                        style={{ backgroundColor: RISK_COLORS.High }}
-                      >
-                        {p.highCount ?? 0} high
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className="bg-secondary text-secondary-foreground border-transparent"
-                      >
-                        {p.openCount ?? 0} open
-                      </Badge>
-                    </div>
-
-                    {/* Trend sparkline */}
-                    <div>
-                      <p className="text-eyebrow mb-1 text-muted-foreground">
-                        Open items trend
+                    {trend.length > 1 ? (
+                      <div className="h-16">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={trend}>
+                            <Area
+                              type="monotone"
+                              dataKey="severe"
+                              stroke="#ea580c"
+                              fill="#ea580c"
+                              fillOpacity={0.18}
+                              strokeWidth={2}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Not enough history for a trend yet.
                       </p>
-                      {trend.length > 1 ? (
-                        <div className="h-16">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={trend}>
-                              <Area
-                                type="monotone"
-                                dataKey="openCount"
-                                stroke="#ea580c"
-                                fill="#ea580c"
-                                fillOpacity={0.18}
-                                strokeWidth={2}
-                              />
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          Not enough history for a trend yet.
-                        </p>
-                      )}
-                    </div>
+                    )}
+                  </div>
 
-                    {/* Footer */}
-                    <div className="flex items-center justify-between border-t border-border pt-3 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1.5">
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        {p.acceptedRiskCount ?? 0} accepted risk
-                        {(p.acceptedRiskCount ?? 0) === 1 ? "" : "s"}
-                      </span>
-                      <span className="font-medium text-foreground">
-                        Open register →
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
+                  {/* Footer */}
+                  <div className="flex items-center justify-between border-t border-border pt-3 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <ClipboardList className="h-3.5 w-3.5" />
+                      {p.reviewCount ?? 0} review
+                      {(p.reviewCount ?? 0) === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
             );
           })}
         </div>

@@ -88,48 +88,34 @@ function PostureCell({ row }: { row: ReportRow }) {
   );
 }
 
-const CSV_HEADERS = [
-  "Reviewer", "Role", "Project", "Review date", "Version",
-  "Critical", "High", "Medium", "Low", "Threats", "Recommendations",
-  "AI", "Summary",
-];
-
-function csvEscape(v: string | number): string {
-  const s = String(v ?? "");
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/** Build a CSV from the (filtered) report rows and trigger a client download. */
-function exportCsv(rows: ReportRow[]) {
-  const lines = [CSV_HEADERS.join(",")];
-  for (const r of rows) {
-    lines.push(
-      [
-        r.reviewer, r.reviewerRole, r.project, r.reviewDate, r.version,
-        r.critical, r.high, r.medium, r.low, r.threatCount, r.recoCount,
-        r.aiGenerated ? "yes" : "no", r.headline,
-      ]
-        .map(csvEscape)
-        .join(","),
-    );
-  }
-  const blob = new Blob([lines.join("\n")], {
-    type: "text/csv;charset=utf-8;",
-  });
-  const url = URL.createObjectURL(blob);
+/**
+ * Download the governance report as a clean .xlsx, honoring the active reviewer
+ * filter. The file is built server-side by GET /api/report/export (real numeric
+ * columns, bold frozen header); here we just fetch the bytes and save them.
+ */
+async function exportExcel(reviewer: string): Promise<void> {
+  const url =
+    reviewer === "all"
+      ? "/api/report/export"
+      : `/api/report/export?reviewer=${encodeURIComponent(reviewer)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Export failed (${res.status})`);
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = `stride-review-report-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.href = href;
+  a.download = `stride-review-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(href);
 }
 // CHUNK_PLACEHOLDER
 
 export default function AuditPage() {
   const [reviewer, setReviewer] = useState("all");
   const [entity, setEntity] = useState("all");
+  const [exporting, setExporting] = useState(false);
 
   const report = useApi<ReportData>("/api/report");
 
@@ -186,11 +172,14 @@ export default function AuditPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => exportCsv(rows)}
-              disabled={rows.length === 0}
+              onClick={() => {
+                setExporting(true);
+                exportExcel(reviewer).finally(() => setExporting(false));
+              }}
+              disabled={rows.length === 0 || exporting}
             >
               <Download className="h-4 w-4" />
-              Export CSV
+              {exporting ? "Exporting…" : "Export Excel"}
             </Button>
           </div>
         </div>

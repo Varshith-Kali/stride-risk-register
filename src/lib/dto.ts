@@ -131,6 +131,21 @@ export interface TimelineData {
 }
 
 /* ── Portfolio ─────────────────────────────────────────────────────────────── */
+/** One condensed review as it appears in a project's review list. */
+export interface PortfolioReview {
+  id: number;
+  reviewer: string;
+  reviewerRole: string;
+  reviewDate: string;
+  createdAt: string;
+  version: number;
+  headline: string;
+  riskPosture: RiskPosture;
+  threatCount: number;
+  recoCount: number;
+  aiGenerated: boolean;
+}
+
 export interface PortfolioProject {
   id: number;
   name: string;
@@ -141,6 +156,8 @@ export interface PortfolioProject {
   reviewCount: number;
   lastReviewDate: string;
   trend: { date: string; severe: number }[];
+  /** Every condensed review for this project, newest first. */
+  reviews: PortfolioReview[];
 }
 
 /* ── Reviewers scorecard ───────────────────────────────────────────────────── */

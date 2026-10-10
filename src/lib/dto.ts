@@ -103,10 +103,31 @@ export interface TimelinePoint {
   cumulativeRecommendations: number;
 }
 
+/** One review as a dated entry in the chronological activity feed. */
+export interface TimelineEvent {
+  id: number;
+  date: string;
+  createdAt: string;
+  project: string;
+  reviewer: string;
+  headline: string;
+  threatCount: number;
+  recoCount: number;
+  riskPosture: RiskPosture;
+  aiGenerated: boolean;
+}
+
 export interface TimelineData {
   points: TimelinePoint[];
+  events: TimelineEvent[];
   reviewers: { name: string; reviews: number }[];
-  totals: { reviews: number; recommendations: number };
+  totals: {
+    reviews: number;
+    recommendations: number;
+    reviewers: number;
+    firstActivity: string | null;
+    lastActivity: string | null;
+  };
 }
 
 /* ── Portfolio ─────────────────────────────────────────────────────────────── */
@@ -143,4 +164,35 @@ export interface AuditEntry {
   actor: string;
   detail: string;
   createdAt: string;
+}
+
+/* ── Report — governance review report (all reviewers, all reviews) ────────── */
+/** One condensed review as a row in the report table. */
+export interface ReportRow {
+  id: number;
+  reviewer: string;
+  reviewerRole: string;
+  project: string;
+  reviewDate: string;
+  createdAt: string;
+  version: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  threatCount: number;
+  recoCount: number;
+  headline: string;
+  aiGenerated: boolean;
+}
+
+export interface ReportData {
+  rows: ReportRow[];
+  reviewers: string[];
+  totals: {
+    reviews: number;
+    reviewers: number;
+    threatsReviewed: number;
+    recommendations: number;
+  };
 }

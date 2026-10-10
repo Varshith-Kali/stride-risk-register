@@ -8,7 +8,6 @@ import {
   Users,
   Briefcase,
   History,
-  BookMarked,
   ScrollText,
   KeyRound,
   Menu,
@@ -36,7 +35,6 @@ const NAV_ITEMS = [
   { href: "/timeline", label: "Timeline", icon: History },
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
   { href: "/reviewers", label: "Reviewers", icon: Users },
-  { href: "/library", label: "Library", icon: BookMarked },
   { href: "/audit", label: "Audit", icon: ScrollText },
 ];
 

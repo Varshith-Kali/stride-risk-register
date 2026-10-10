@@ -1,21 +1,22 @@
 "use client";
 
 /**
- * /timeline — stock-market-style time series of platform activity.
+ * /timeline — a chronological view of how the platform is being used.
  *
- * One call to GET /api/timeline returns per-day review/recommendation counts
- * with a running cumulative total across every reviewer. The main chart is the
- * cumulative "stock chart"; a secondary chart shows per-day submissions, and a
- * breakdown lists reviews per reviewer.
+ * One call to GET /api/timeline returns three complementary slices:
+ *  - a KPI band (totals + activity span),
+ *  - a cumulative "growth" area chart (running totals over time), and
+ *  - a dated activity feed: every review as an entry on a vertical timeline,
+ *    newest first — the part that stays legible whether there are 2 reviews
+ *    or 2,000.
  */
 
 import { useMemo } from "react";
-import { Activity, TrendingUp, Users } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Activity, CalendarRange, TrendingUp, Users } from "lucide-react";
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Legend,
   ResponsiveContainer,
@@ -31,8 +32,8 @@ import {
   LoadingState,
   ErrorState,
 } from "@/components/view-helpers";
-import { CHART_COLORS } from "@/lib/risk";
-import type { TimelineData } from "@/lib/dto";
+import { RISK_COLORS } from "@/lib/risk";
+import type { TimelineData, RiskPosture } from "@/lib/dto";
 
 const REVIEWS_COLOR = "#2b2b2b";
 const RECOS_COLOR = "#808080";
@@ -52,40 +53,91 @@ function fmtDay(iso: string | undefined): string {
     : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function fmtFull(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+}
+
 function normalize(raw: Partial<TimelineData> | null): TimelineData {
   return {
     points: Array.isArray(raw?.points) ? raw.points : [],
+    events: Array.isArray(raw?.events) ? raw.events : [],
     reviewers: Array.isArray(raw?.reviewers) ? raw.reviewers : [],
     totals: {
       reviews: raw?.totals?.reviews ?? 0,
       recommendations: raw?.totals?.recommendations ?? 0,
+      reviewers: raw?.totals?.reviewers ?? 0,
+      firstActivity: raw?.totals?.firstActivity ?? null,
+      lastActivity: raw?.totals?.lastActivity ?? null,
     },
   };
 }
 
-// PAGE_MARKER
+/** Compact Critical/High/Medium/Low chips for one review's posture. */
+function PostureChips({ posture }: { posture: RiskPosture }) {
+  const parts: { label: string; value: number; level: string }[] = [
+    { label: "C", value: posture.critical, level: "Critical" },
+    { label: "H", value: posture.high, level: "High" },
+    { label: "M", value: posture.medium, level: "Medium" },
+    { label: "L", value: posture.low, level: "Low" },
+  ];
+  return (
+    <div className="flex items-center gap-1.5">
+      {parts.map((p) => (
+        <span
+          key={p.label}
+          title={`${p.level}: ${p.value}`}
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium"
+          style={{
+            backgroundColor: `${RISK_COLORS[p.level]}1a`,
+            color: RISK_COLORS[p.level],
+          }}
+        >
+          {p.label} {p.value}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export default function TimelinePage() {
+  const router = useRouter();
   const { data, loading, error, reload } =
     useApi<Partial<TimelineData>>("/api/timeline");
 
   const td = useMemo(() => normalize(data ?? null), [data]);
-  const maxReviewer = Math.max(1, ...td.reviewers.map((r) => r.reviews));
+
+  const avgRecos =
+    td.totals.reviews > 0
+      ? Math.round((td.totals.recommendations / td.totals.reviews) * 10) / 10
+      : 0;
 
   const statCards = [
     {
       label: "Total reviews",
-      value: td.totals.reviews,
+      value: String(td.totals.reviews),
       icon: <Activity className="h-4 w-4" />,
     },
     {
-      label: "Total recommendations",
-      value: td.totals.recommendations,
+      label: "Recommendations",
+      value: String(td.totals.recommendations),
       icon: <TrendingUp className="h-4 w-4" />,
     },
     {
-      label: "Reviewers",
-      value: td.reviewers.length,
+      label: "Avg per review",
+      value: String(avgRecos),
+      icon: <TrendingUp className="h-4 w-4" />,
+    },
+    {
+      label: "Active reviewers",
+      value: String(td.totals.reviewers),
       icon: <Users className="h-4 w-4" />,
     },
   ];
@@ -95,13 +147,13 @@ export default function TimelinePage() {
       <PageHeader
         eyebrow="Platform activity"
         title="Timeline"
-        hint="Reviews and recommendations submitted across all reviewers over time — a running view of how the platform is being used."
+        hint="A running, chronological view of every condensed review submitted across the platform — how fast the register is growing and what landed when."
       />
 
       {loading && <LoadingState rows={6} />}
       {error && !loading && <ErrorState message={error} onRetry={reload} />}
 
-      {!loading && !error && td.points.length === 0 && (
+      {!loading && !error && td.events.length === 0 && (
         <EmptyState
           icon={Activity}
           title="No activity yet"
@@ -109,10 +161,10 @@ export default function TimelinePage() {
         />
       )}
 
-      {!loading && !error && td.points.length > 0 && (
+      {!loading && !error && td.events.length > 0 && (
         <div className="space-y-6">
-          {/* Totals */}
-          <div className="grid gap-4 sm:grid-cols-3">
+          {/* KPI band */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {statCards.map((c) => (
               <div key={c.label} className="apple-card p-4">
                 <span className="text-muted-foreground">{c.icon}</span>
@@ -124,11 +176,25 @@ export default function TimelinePage() {
             ))}
           </div>
 
-          {/* Cumulative "stock chart" */}
+          {/* Activity span */}
+          <div className="apple-card flex flex-wrap items-center gap-2 p-4 text-sm">
+            <CalendarRange className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Active from</span>
+            <span className="font-medium">
+              {fmtFull(td.totals.firstActivity)}
+            </span>
+            <span className="text-muted-foreground">to</span>
+            <span className="font-medium">
+              {fmtFull(td.totals.lastActivity)}
+            </span>
+          </div>
+
+          {/* Cumulative growth ("stock chart") */}
           <div className="apple-card p-5">
-            <h3 className="text-title">Cumulative activity</h3>
+            <h3 className="text-title">Platform growth</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Running total of reviews and recommendations submitted over time.
+              Running total of reviews and recommendations as the register
+              builds up over time.
             </p>
             <div className="mt-4 h-80">
               <ResponsiveContainer width="100%" height="100%">
@@ -184,79 +250,60 @@ export default function TimelinePage() {
             </div>
           </div>
 
-          {/* Per-day submissions + reviewer breakdown */}
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="apple-card p-5 lg:col-span-2">
-              <h3 className="text-title">Per-day submissions</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Reviews and recommendations submitted each day.
-              </p>
-              <div className="mt-4 h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={td.points}
-                    margin={{ left: 4, right: 12, top: 8 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={fmtDay}
-                      tick={{ fontSize: 11 }}
-                      minTickGap={24}
-                    />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                    <Tooltip
-                      contentStyle={chartTooltipStyle}
-                      labelFormatter={(l) => fmtDay(l as string)}
-                    />
-                    <Legend />
-                    <Bar
-                      dataKey="reviews"
-                      name="Reviews"
-                      fill={REVIEWS_COLOR}
-                      radius={[4, 4, 0, 0]}
-                    />
-                    <Bar
-                      dataKey="recommendations"
-                      name="Recommendations"
-                      fill={RECOS_COLOR}
-                      radius={[4, 4, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+          {/* Activity feed — the chronological timeline */}
+          <div className="apple-card p-5">
+            <h3 className="text-title">Activity feed</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Every review in order, most recent first. Select one to open its
+              condensed detail.
+            </p>
+            <ol className="mt-5 space-y-0">
+              {td.events.map((e, i) => (
+                <li key={e.id} className="relative flex gap-4 pb-6 last:pb-0">
+                  {/* Connector line + node */}
+                  <div className="relative flex flex-col items-center">
+                    <span className="z-10 mt-1 h-2.5 w-2.5 shrink-0 rounded-full border-2 border-background bg-foreground" />
+                    {i < td.events.length - 1 && (
+                      <span className="absolute top-1 h-full w-px bg-border" />
+                    )}
+                  </div>
 
-            <div className="apple-card p-5">
-              <h3 className="text-title">Reviews by reviewer</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                All reviewers active on the platform.
-              </p>
-              <ul className="mt-4 space-y-3">
-                {td.reviewers.map((r, i) => (
-                  <li key={r.name}>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="truncate">{r.name}</span>
-                      <span className="font-medium">{r.reviews}</span>
+                  {/* Entry */}
+                  <button
+                    onClick={() => router.push(`/dashboard?review=${e.id}`)}
+                    className="min-w-0 flex-1 rounded-xl px-3 py-2 text-left transition-colors hover:bg-accent/50"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="truncate font-medium">
+                          {e.project}
+                        </span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {e.reviewer}
+                        </span>
+                      </div>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {fmtFull(e.createdAt)}
+                      </span>
                     </div>
-                    <div className="mt-1 h-1.5 w-full rounded-full bg-secondary">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${(r.reviews / maxReviewer) * 100}%`,
-                          backgroundColor:
-                            CHART_COLORS[i % CHART_COLORS.length],
-                        }}
-                      />
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <PostureChips posture={e.riskPosture} />
+                      <span className="text-xs text-muted-foreground">
+                        {e.threatCount} threats · {e.recoCount} recommendations
+                      </span>
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
+                    {e.headline && (
+                      <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">
+                        {e.headline}
+                      </p>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ol>
           </div>
         </div>
       )}
     </AppShell>
   );
 }
-

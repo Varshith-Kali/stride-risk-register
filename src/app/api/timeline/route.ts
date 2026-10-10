@@ -8,21 +8,26 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 /**
- * GET /api/timeline — stock-market-style time series of platform activity.
+ * GET /api/timeline — chronological view of platform activity.
  *
- * Buckets every submission by day over its `created_at`: reviews and
- * recommendations submitted each day plus a running cumulative total, with a
- * per-reviewer breakdown so all reviewers are visible. Recommendation counts
- * come from each submission's stored condensed review (no raw-row queries).
+ * Returns three complementary slices, all derived from each submission's stored
+ * condensed review (no raw-row queries):
+ *  - `points`: per-day review/recommendation counts with a running cumulative
+ *    total (the growth / "stock" chart).
+ *  - `events`: one dated entry per submission, newest first (the activity feed).
+ *  - `reviewers` + `totals`: who is active and the span of activity.
  */
 export async function GET(req: NextRequest) {
   const rl = checkRateLimit(req);
   if (rl) return rl;
   try {
-    const rows = all<SubmissionRow & { reviewer_name: string }>(
-      `SELECT s.*, r.name AS reviewer_name
+    const rows = all<
+      SubmissionRow & { reviewer_name: string; project_name: string }
+    >(
+      `SELECT s.*, r.name AS reviewer_name, p.name AS project_name
        FROM submissions s
        JOIN reviewers r ON r.id = s.reviewer_id
+       JOIN projects p ON p.id = s.project_id
        ORDER BY s.created_at ASC`
     );
 
@@ -31,6 +36,25 @@ export async function GET(req: NextRequest) {
     const reviewerCounts = new Map<string, number>();
     let totalReviews = 0;
     let totalRecommendations = 0;
+
+    // Chronological activity feed — one entry per submission (newest first).
+    const events = rows
+      .map((s) => {
+        const c = parseCondensedReview(s.condensed_review_json);
+        return {
+          id: s.id,
+          date: (s.created_at ?? "").slice(0, 10),
+          createdAt: s.created_at,
+          project: s.project_name,
+          reviewer: s.reviewer_name,
+          headline: c.headline,
+          threatCount: c.threatCount,
+          recoCount: c.recoCount,
+          riskPosture: c.riskPosture,
+          aiGenerated: c.aiGenerated,
+        };
+      })
+      .reverse();
 
     for (const s of rows) {
       const day = (s.created_at ?? "").slice(0, 10);
@@ -69,12 +93,23 @@ export async function GET(req: NextRequest) {
       .map(([name, reviews]) => ({ name, reviews }))
       .sort((a, b) => b.reviews - a.reviews);
 
+    // Activity span (rows are ascending by created_at).
+    const firstActivity = rows.length ? rows[0].created_at : null;
+    const lastActivity = rows.length ? rows[rows.length - 1].created_at : null;
+
     return NextResponse.json({
       ok: true,
       data: {
         points,
+        events,
         reviewers,
-        totals: { reviews: totalReviews, recommendations: totalRecommendations },
+        totals: {
+          reviews: totalReviews,
+          recommendations: totalRecommendations,
+          reviewers: reviewerCounts.size,
+          firstActivity,
+          lastActivity,
+        },
       },
     });
   } catch (e) {

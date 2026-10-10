@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -309,15 +308,7 @@ function IntakeWizard() {
 
           {/* Recommendations */}
           <div className="space-y-2">
-            <div className="flex items-baseline justify-between">
-              <Label htmlFor="recommendations">Reviewer recommendations</Label>
-              <Link
-                href="/library?pick=1"
-                className="text-xs font-medium text-muted-foreground underline-offset-4 hover:underline"
-              >
-                Insert from library
-              </Link>
-            </div>
+            <Label htmlFor="recommendations">Reviewer recommendations</Label>
             <Textarea
               id="recommendations"
               rows={8}

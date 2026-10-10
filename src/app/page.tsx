@@ -134,7 +134,11 @@ function IntakeWizard() {
   const [reviewerName, setReviewerName] = useState("");
   const [reviewDate, setReviewDate] = useState(localToday());
   const [notes, setNotes] = useState("");
-  const [recommendations, setRecommendations] = useState("");
+  // Library "reuse" → pre-fill recommendations (?reco=); read once via lazy
+  // initializer — no sync effect needed.
+  const [recommendations, setRecommendations] = useState(
+    () => searchParams.get("reco") ?? "",
+  );
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const [reviewersLoading, setReviewersLoading] = useState(true);
   const [reviewersError, setReviewersError] = useState<string | null>(null);
@@ -167,17 +171,6 @@ function IntakeWizard() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // Library "reuse" → pre-fill recommendations (Agent E passes ?reco=...).
-  useEffect(() => {
-    const reco = searchParams.get("reco");
-    if (reco) {
-      setRecommendations((prev) =>
-        prev ? `${prev}\n\n${reco}` : reco,
-      );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pickFile = useCallback((f: File | null) => {

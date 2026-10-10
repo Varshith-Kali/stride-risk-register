@@ -19,6 +19,15 @@ function bad(message: string, status = 400) {
 export async function POST(req: NextRequest) {
   const rl = checkRateLimit(req);
   if (rl) return rl;
+  // Next.js truncates request bodies over ~10 MiB before we see them, which
+  // makes formData() throw a generic error. Check Content-Length first so
+  // oversized uploads get an accurate 413 instead of a confusing message.
+  // (Threshold has 1 MiB slack for multipart overhead; the precise file-size
+  // check below is authoritative.)
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_FILE_BYTES + 1024 * 1024) {
+    return bad("File too large. Maximum size is 10 MiB.", 413);
+  }
   try {
     let form: FormData;
     try {
@@ -45,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     let workbook;
     try {
-      workbook = readWorkbook(buf);
+      workbook = await readWorkbook(buf);
     } catch (e) {
       if (e instanceof OoxmlError) return bad(e.message);
       return handleError(e);

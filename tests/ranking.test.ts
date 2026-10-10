@@ -1,17 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { readWorkbook } from "@/core/ooxml";
 import { suggestMapping } from "@/core/columns";
 import { parseThreats } from "@/core/excel";
 import { rankThreats } from "@/core/ranking";
+import type { ColumnMapping } from "@/core/types";
 import type { ParsedThreat } from "@/core/types";
+import type { WorkbookSheet } from "@/core/ooxml";
 
 const FIXTURE = new URL("./fixtures/sample-threat-model.xlsx", import.meta.url);
 
-const workbook = readWorkbook(readFileSync(FIXTURE));
-const strideSheet = workbook.sheets.find((s) => s.name === "STRIDE")!;
-const mapping = suggestMapping(strideSheet.rows[0]).mapping;
-const { threats } = parseThreats([strideSheet], mapping);
+let threats!: ParsedThreat[];
+
+beforeAll(async () => {
+  const workbook = await readWorkbook(readFileSync(FIXTURE));
+  const strideSheet: WorkbookSheet = workbook.sheets.find(
+    (s) => s.name === "STRIDE",
+  )!;
+  const mapping: ColumnMapping = suggestMapping(strideSheet.rows[0]).mapping;
+  threats = parseThreats([strideSheet], mapping).threats;
+});
 
 describe("rankThreats — transparent scoring", () => {
   it("scores Critical 100 > High 75 > Medium 50 > Low 25 > missing 0", () => {

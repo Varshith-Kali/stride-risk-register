@@ -395,4 +395,5 @@ const xlsx = buildWorkbook([
   { name: "Notes", rows: NOTES_SHEET },
 ]);
 writeFileSync(OUT, xlsx);
+// eslint-disable-next-line no-console -- standalone fixture generator script
 console.log(`Wrote ${OUT} (${xlsx.length} bytes): 12 threat rows + 1 blank row on "STRIDE", junk on "Notes".`);

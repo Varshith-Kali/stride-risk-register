@@ -4,7 +4,7 @@
  * Shared data-fetching + page chrome helpers for Agent E views.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { apiGet } from "@/lib/api-client";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,18 +20,16 @@ export interface UseApiResult<T> {
 /** Fetch-on-mount hook over the api-client envelope. */
 export function useApi<T>(url: string | null): UseApiResult<T> {
   const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState<boolean>(!!url);
+  const [loading, setLoading] = useState<boolean>(url !== null);
   const [error, setError] = useState<string | null>(null);
-  const urlRef = useRef(url);
-  urlRef.current = url;
 
-  const reload = useCallback(() => {
-    const u = urlRef.current;
-    if (!u) return;
+  // Mount / URL-change fetch. State updates happen only in promise
+  // continuations (never synchronously in the effect body), per
+  // react-hooks/set-state-in-effect.
+  useEffect(() => {
+    if (!url) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    apiGet<T>(u).then(
+    apiGet<T>(url).then(
       (payload) => {
         if (cancelled) return;
         setData(payload ?? null);
@@ -47,14 +45,27 @@ export function useApi<T>(url: string | null): UseApiResult<T> {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [url]);
 
-  useEffect(() => {
-    const cleanup = reload();
-    return cleanup;
-  }, [reload, url]);
+  // Manual refresh for event handlers (buttons): spinner first, then refetch.
+  const refresh = useCallback(() => {
+    if (!url) return;
+    setLoading(true);
+    setError(null);
+    apiGet<T>(url).then(
+      (payload) => {
+        setData(payload ?? null);
+        setError(null);
+        setLoading(false);
+      },
+      (err) => {
+        setError(err instanceof Error ? err.message : "Request failed");
+        setLoading(false);
+      },
+    );
+  }, [url]);
 
-  return { data, loading, error, reload };
+  return { data, loading, error, reload: refresh };
 }
 
 /** Standard page header: eyebrow + title + optional actions. */
@@ -67,7 +78,7 @@ export function PageHeader({
   eyebrow: string;
   title: string;
   hint?: string;
-  actions?: React.ReactNode;
+  actions?: ReactNode;
 }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">

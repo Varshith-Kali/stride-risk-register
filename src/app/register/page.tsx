@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -79,6 +79,17 @@ import { THREAT_STATUSES as STATUSES } from "@/lib/dto";
 
 const ALL = "__all__";
 
+/** Pure fetch (no setState): safe to call from effects and event handlers. */
+async function fetchThreats(params: {
+  status?: string;
+  risk?: string;
+  stride?: string;
+  q?: string;
+}): Promise<Threat[]> {
+  const data = await apiGetQuery<ThreatsResponse>("/api/threats", params);
+  return Array.isArray(data.threats) ? data.threats : [];
+}
+
 const COLUMNS = [
   { key: "ref", label: "Risk ID" },
   { key: "projectName", label: "Project" },
@@ -154,6 +165,9 @@ function RegisterInner() {
   );
 
   const [selected, setSelected] = useState<Threat | null>(null);
+  // Reviewer attribution for drawer actions — lives in the parent so it
+  // survives switching between threats (the drawer itself resets per threat).
+  const [changedBy, setChangedBy] = useState("");
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 350);
@@ -163,27 +177,54 @@ function RegisterInner() {
   const riskValues = risk === ALL ? [] : risk.split(",");
   const apiRisk = riskValues.length === 1 ? riskValues[0] : undefined;
 
-  const load = async () => {
+  // Threat list fetch on filter change. State updates happen only in promise
+  // continuations (never synchronously in the effect body), per
+  // react-hooks/set-state-in-effect.
+  useEffect(() => {
+    let cancelled = false;
+    fetchThreats({
+      status: status === ALL ? undefined : status,
+      risk: apiRisk,
+      stride: stride === ALL ? undefined : stride,
+      q: debouncedQ || undefined,
+    }).then(
+      (list) => {
+        if (cancelled) return;
+        setThreats(list);
+        setError(null);
+        setLoading(false);
+      },
+      (err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Could not load threats");
+        setLoading(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQ, status, apiRisk, stride]);
+
+  // Retry button (event handler — synchronous setState is fine here).
+  const retry = useCallback(() => {
     setLoading(true);
     setError(null);
-    try {
-      const data = await apiGetQuery<ThreatsResponse>("/api/threats", {
-        status: status === ALL ? undefined : status,
-        risk: apiRisk,
-        stride: stride === ALL ? undefined : stride,
-        q: debouncedQ || undefined,
-      });
-      setThreats(Array.isArray(data.threats) ? data.threats : []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load threats");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchThreats({
+      status: status === ALL ? undefined : status,
+      risk: apiRisk,
+      stride: stride === ALL ? undefined : stride,
+      q: debouncedQ || undefined,
+    }).then(
+      (list) => {
+        setThreats(list);
+        setError(null);
+        setLoading(false);
+      },
+      (err) => {
+        setError(err instanceof Error ? err.message : "Could not load threats");
+        setLoading(false);
+      },
+    );
   }, [debouncedQ, status, apiRisk, stride]);
 
   const projects = useMemo(
@@ -290,7 +331,7 @@ function RegisterInner() {
     window.location.href = url;
   }
 
-  function SortHeader({ k, label }: { k: SortKey; label: string }) {
+  function renderSortHeader(k: SortKey, label: string) {
     const active = sortKey === k;
     return (
       <button
@@ -451,7 +492,7 @@ function RegisterInner() {
             <TriangleAlert className="h-8 w-8 text-destructive" />
             <p className="text-sm font-medium">Couldn&apos;t load the register</p>
             <p className="text-xs text-muted-foreground">{error}</p>
-            <Button variant="outline" onClick={load}>
+            <Button variant="outline" onClick={retry}>
               Retry
             </Button>
           </div>
@@ -483,7 +524,7 @@ function RegisterInner() {
                 <tr className="border-b border-border bg-muted/60 text-left text-xs text-muted-foreground">
                   {visibleCols.includes("ref") && (
                     <th className="px-4 py-3">
-                      <SortHeader k="ref" label="Risk ID" />
+                      {renderSortHeader("ref", "Risk ID")}
                     </th>
                   )}
                   {visibleCols.includes("projectName") && (
@@ -491,27 +532,27 @@ function RegisterInner() {
                   )}
                   {visibleCols.includes("title") && (
                     <th className="px-4 py-3">
-                      <SortHeader k="title" label="Threat" />
+                      {renderSortHeader("title", "Threat")}
                     </th>
                   )}
                   {visibleCols.includes("stride") && (
                     <th className="px-4 py-3">
-                      <SortHeader k="stride" label="STRIDE" />
+                      {renderSortHeader("stride", "STRIDE")}
                     </th>
                   )}
                   {visibleCols.includes("component") && (
                     <th className="px-4 py-3">
-                      <SortHeader k="component" label="Component" />
+                      {renderSortHeader("component", "Component")}
                     </th>
                   )}
                   {visibleCols.includes("risk") && (
                     <th className="px-4 py-3">
-                      <SortHeader k="risk" label="Severity" />
+                      {renderSortHeader("risk", "Severity")}
                     </th>
                   )}
                   {visibleCols.includes("reviewerName") && (
                     <th className="px-4 py-3">
-                      <SortHeader k="reviewerName" label="Reviewer" />
+                      {renderSortHeader("reviewerName", "Reviewer")}
                     </th>
                   )}
                   {visibleCols.includes("links") && (
@@ -519,7 +560,7 @@ function RegisterInner() {
                   )}
                   {visibleCols.includes("status") && (
                     <th className="px-4 py-3">
-                      <SortHeader k="status" label="Status" />
+                      {renderSortHeader("status", "Status")}
                     </th>
                   )}
                   {visibleCols.includes("source") && (
@@ -615,7 +656,10 @@ function RegisterInner() {
       </div>
 
       <ThreatDrawer
+        key={selected?.id ?? "none"}
         threat={selected}
+        changedBy={changedBy}
+        onChangedBy={setChangedBy}
         onClose={() => setSelected(null)}
         onUpdated={(updated) => {
           setThreats((prev) =>
@@ -632,29 +676,31 @@ function RegisterInner() {
 
 function ThreatDrawer({
   threat,
+  changedBy,
+  onChangedBy,
   onClose,
   onUpdated,
 }: {
   threat: Threat | null;
+  changedBy: string;
+  onChangedBy: (v: string) => void;
   onClose: () => void;
   onUpdated: (t: Threat) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [changedBy, setChangedBy] = useState("");
-  const [newStatus, setNewStatus] = useState<string>("");
+  // Per-threat form state re-initializes via key={threat.id} at the usage
+  // site — no sync-on-prop-change effect (react-hooks/set-state-in-effect).
+  const [newStatus, setNewStatus] = useState(() => threat?.status ?? "");
   const [statusReason, setStatusReason] = useState("");
-  const [priorityValue, setPriorityValue] = useState("");
+  const [priorityValue, setPriorityValue] = useState(
+    () => threat?.priorityOverride ?? "",
+  );
   const [priorityReason, setPriorityReason] = useState("");
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
 
+  const threatId = threat?.id ?? null;
   useEffect(() => {
-    if (!threat) return;
-    setNewStatus(threat.status);
-    setStatusReason("");
-    setPriorityValue(threat.priorityOverride ?? "");
-    setPriorityReason("");
-    setAudit(null);
-    // Audit-trail snippet — defensive: route may not exist yet (Agent C).
+    if (threatId == null) return;
     apiGet<{ entries?: AuditEntry[]; audit?: AuditEntry[] }>(
       `/api/audit?entity=threat&limit=20`,
     )
@@ -662,12 +708,12 @@ function ThreatDrawer({
         const entries = data.entries ?? data.audit ?? [];
         setAudit(
           entries.filter(
-            (e) => e.entityId === threat.id || e.entityId == null,
+            (e) => e.entityId === threatId || e.entityId == null,
           ),
         );
       })
       .catch(() => setAudit(null));
-  }, [threat]);
+  }, [threatId]);
 
   if (!threat) return null;
 
@@ -862,7 +908,7 @@ function ThreatDrawer({
                 id="changed-by"
                 placeholder="e.g. Varshith Puli"
                 value={changedBy}
-                onChange={(e) => setChangedBy(e.target.value)}
+                onChange={(e) => onChangedBy(e.target.value)}
               />
             </div>
 

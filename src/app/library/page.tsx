@@ -124,7 +124,7 @@ function LibraryPageInner() {
     }
   }
 
-  function useItem(item: LibraryItem) {
+  function applyItem(item: LibraryItem) {
     if (pickMode) {
       // Intake-page contract: the intake page reads ?reco= and pre-fills the
       // recommendations box.
@@ -249,7 +249,7 @@ function LibraryPageInner() {
                   variant="outline"
                   size="sm"
                   className="rounded-full"
-                  onClick={() => useItem(item)}
+                  onClick={() => applyItem(item)}
                 >
                   {pickMode ? (
                     <>

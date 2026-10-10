@@ -9,7 +9,7 @@
  * session losing it on refresh is the intended behaviour.
  */
 
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 
 export const AI_MODEL = "gpt-5.5";
 
@@ -26,7 +26,7 @@ interface ApiKeyContextValue {
 
 const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
 
-export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
+export function ApiKeyProvider({ children }: { children: ReactNode }) {
   const [apiKey, setApiKeyState] = useState("");
   const setApiKey = useCallback(
     (key: string) => setApiKeyState(key.trim()),

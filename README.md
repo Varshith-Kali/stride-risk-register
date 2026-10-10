@@ -111,6 +111,15 @@ Risk Level, one blank row, plus a junk `Notes` sheet the parser must ignore.
   Postgres move keeps the same signatures and swaps only the driver.
 - Set `RISK_REGISTER_DB_PATH` if the default `./data` location does not suit
   the host. Never commit the DB file.
+- **Reverse-proxy requirement:** the app must run behind a proxy that
+  overwrites `X-Forwarded-For` with the real client IP (Caddy does this by
+  default). Rate limiting keys off that header; a direct `next start`
+  deployment would let clients spoof it and rotate rate-limit identities.
+- **Trust model:** the app has no login by design — it is built for a trusted
+  internal network. Do not expose it to the internet without an authentication
+  gate (e.g. HTTP Basic Auth or SSO at the reverse proxy). Every caller has
+  full read/write power; the audit log records who did what (self-attested
+  names), but cannot prevent misuse.
 
 ## Limitations
 

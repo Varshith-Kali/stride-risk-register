@@ -14,7 +14,7 @@
  * - Row arrays are indexed so that `rows[i]` is Excel row `i + 1`;
  *   gaps become `[]` so the 1-based row numbers stay stable.
  */
-import { inflateRawSync } from "node:zlib";
+import { createInflateRaw } from "node:zlib";
 
 export class OoxmlError extends Error {
   constructor(message: string) {
@@ -155,12 +155,65 @@ function readCentralDirectory(buf: Buffer): ZipEntryInfo[] {
   return entries;
 }
 
+/**
+ * Stream-inflate one entry, enforcing the zip-bomb budget *incrementally*.
+ *
+ * A one-shot inflate would transiently allocate the entire decompressed output
+ * before any budget check runs — a crafted 10 MiB entry can expand to gigabytes
+ * and OOM the process. Streaming with a per-chunk counter destroys the stream
+ * the moment the budget is exceeded, bounding heap use to ~budget + chunk.
+ */
+function inflateWithBudget(
+  comp: Buffer,
+  entryName: string,
+  budget: { remaining: number },
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      inflator.destroy();
+      reject(err);
+    };
+    const inflator = createInflateRaw();
+    inflator.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > budget.remaining) {
+        fail(
+          new OoxmlError(
+            "This file expands to more than 100 MiB when uncompressed. Upload a smaller workbook.",
+          ),
+        );
+        return;
+      }
+      chunks.push(chunk);
+    });
+    inflator.on("end", () => {
+      if (settled) return;
+      settled = true;
+      budget.remaining -= total;
+      resolve(Buffer.concat(chunks));
+    });
+    inflator.on("error", () => {
+      fail(
+        new OoxmlError(
+          `Could not decompress "${entryName}". The file may be corrupt — please re-save it in Excel.`,
+        ),
+      );
+    });
+    inflator.end(comp);
+  });
+}
+
 /** Inflate one entry; enforces the zip-bomb budget as it goes. */
-function readEntryData(
+async function readEntryData(
   buf: Buffer,
   entry: ZipEntryInfo,
   budget: { remaining: number }
-): Buffer {
+): Promise<Buffer> {
   if (entry.flags & 0x01) {
     throw new OoxmlError(
       `The workbook is password-protected ("${entry.name}"). Please upload an unprotected .xlsx file.`
@@ -190,14 +243,10 @@ function readEntryData(
     throw new OoxmlError("This file is not a valid Excel (.xlsx) file (truncated entry).");
   }
   const comp = buf.subarray(dataStart, dataEnd);
-  let out: Buffer;
-  try {
-    out = entry.method === 8 ? inflateRawSync(comp) : Buffer.from(comp);
-  } catch {
-    throw new OoxmlError(
-      `Could not decompress "${entry.name}". The file may be corrupt — please re-save it in Excel.`
-    );
+  if (entry.method === 8) {
+    return inflateWithBudget(comp, entry.name, budget);
   }
+  const out = Buffer.from(comp);
   budget.remaining -= out.length;
   if (budget.remaining < 0) {
     throw new OoxmlError(
@@ -369,7 +418,7 @@ function parseSheetRows(
  * Throws OoxmlError with a user-facing message when the file is not a
  * valid workbook, exceeds the size/shape guards, or is malformed.
  */
-export function readWorkbook(buf: Buffer): ReadWorkbookResult {
+export async function readWorkbook(buf: Buffer): Promise<ReadWorkbookResult> {
   if (!Buffer.isBuffer(buf)) {
     throw new OoxmlError("No file data was provided.");
   }
@@ -386,12 +435,12 @@ export function readWorkbook(buf: Buffer): ReadWorkbookResult {
   const byName = new Map<string, ZipEntryInfo>();
   for (const e of entries) byName.set(e.name, e);
   const budget = { remaining: MAX_UNCOMPRESSED_BYTES };
-  const get = (name: string): Buffer | null => {
+  const get = async (name: string): Promise<Buffer | null> => {
     const e = byName.get(name);
     return e ? readEntryData(buf, e, budget) : null;
   };
 
-  const rootRelsXml = get("_rels/.rels")?.toString("utf8") ?? "";
+  const rootRelsXml = (await get("_rels/.rels"))?.toString("utf8") ?? "";
   const workbookPath = rootRelsXml ? parseOfficeDocumentTarget(rootRelsXml) : "xl/workbook.xml";
   const workbookEntry = byName.get(workbookPath);
   if (!workbookEntry) {
@@ -399,7 +448,7 @@ export function readWorkbook(buf: Buffer): ReadWorkbookResult {
       "This file is not a valid Excel (.xlsx) file (workbook part missing). Please re-save it in Excel."
     );
   }
-  const workbookXml = readEntryData(buf, workbookEntry, budget).toString("utf8");
+  const workbookXml = (await readEntryData(buf, workbookEntry, budget)).toString("utf8");
   const sheetRefs = parseWorkbookSheets(workbookXml);
   if (sheetRefs.length === 0) {
     throw new OoxmlError("The workbook contains no worksheets.");
@@ -414,14 +463,16 @@ export function readWorkbook(buf: Buffer): ReadWorkbookResult {
   const wbRelsPath = workbookPath.includes("/")
     ? `${workbookPath.slice(0, workbookPath.lastIndexOf("/") + 1)}_rels/${workbookPath.slice(workbookPath.lastIndexOf("/") + 1)}.rels`
     : `_rels/${workbookPath}.rels`;
-  const wbRelsXml = get(wbRelsPath)?.toString("utf8") ?? "";
+  const wbRelsXml = ((await get(wbRelsPath))?.toString("utf8") ?? "");
   const relTargets = wbRelsXml ? parseRels(wbRelsXml) : new Map<string, string>();
 
-  const sstBuf = get("xl/sharedStrings.xml");
+  const sstBuf = await get("xl/sharedStrings.xml");
   const sharedStrings = sstBuf ? parseSharedStrings(sstBuf.toString("utf8")) : null;
 
   const acc: CellAcc = { count: 0 };
-  const sheets: WorkbookSheet[] = sheetRefs.map((ref, i) => {
+  const sheets: WorkbookSheet[] = [];
+  for (let i = 0; i < sheetRefs.length; i++) {
+    const ref = sheetRefs[i];
     let partPath = ref.rid ? relTargets.get(ref.rid) : undefined;
     if (!partPath) partPath = `xl/worksheets/sheet${i + 1}.xml`;
     const entry = byName.get(partPath);
@@ -430,9 +481,9 @@ export function readWorkbook(buf: Buffer): ReadWorkbookResult {
         `The worksheet "${ref.name}" is missing from the file. Please re-save the workbook in Excel.`
       );
     }
-    const xml = readEntryData(buf, entry, budget).toString("utf8");
-    return { name: ref.name, rows: parseSheetRows(xml, sharedStrings, acc) };
-  });
+    const xml = (await readEntryData(buf, entry, budget)).toString("utf8");
+    sheets.push({ name: ref.name, rows: parseSheetRows(xml, sharedStrings, acc) });
+  }
 
   return { sheets };
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, handleError } from "@/lib/api-utils";
-import { all, get, run, transaction, audit, now, ensureReviewer } from "@/db";
+import { all, get, run, transaction, audit, now, getReviewerByName } from "@/db";
 import type { ProjectRow, SubmissionRow } from "@/db/schema";
 import { readWorkbook, OoxmlError } from "@/core/ooxml";
 import { suggestMapping, fingerprint } from "@/core/columns";
@@ -50,6 +50,13 @@ function validMapping(m: unknown): m is ColumnMapping {
 export async function POST(req: NextRequest) {
   const rl = checkRateLimit(req);
   if (rl) return rl;
+  // Next.js truncates request bodies over ~10 MiB before we see them, which
+  // makes formData() throw a generic error. Check Content-Length first so
+  // oversized uploads get an accurate 413 instead of a confusing message.
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_FILE_BYTES + 1024 * 1024) {
+    return bad("File too large. Maximum size is 10 MiB.", 413);
+  }
   try {
     let form: FormData;
     try {
@@ -98,7 +105,7 @@ export async function POST(req: NextRequest) {
     const buf = Buffer.from(await file.arrayBuffer());
     let workbook;
     try {
-      workbook = readWorkbook(buf);
+      workbook = await readWorkbook(buf);
     } catch (e) {
       if (e instanceof OoxmlError) return bad(e.message);
       return handleError(e);
@@ -148,9 +155,17 @@ export async function POST(req: NextRequest) {
     const fp = fingerprint(primary.headers);
     const filename = sane(file.name, 255);
 
+    // Reviewer must be on the active roster (config/reviewers.yaml) —
+    // no auto-creation: every submission is attributed to a known reviewer.
+    const reviewer = getReviewerByName(reviewerName);
+    if (!reviewer || reviewer.active !== 1) {
+      return bad(
+        "Unknown or inactive reviewer. Select a reviewer from the roster."
+      );
+    }
+
     const result = transaction(() => {
       const project = ensureProject(projectName);
-      const reviewer = ensureReviewer(reviewerName);
       const row = get<{ v: number }>(
         `SELECT COALESCE(MAX(version), 0) AS v FROM submissions WHERE project_id = ?`,
         project.id

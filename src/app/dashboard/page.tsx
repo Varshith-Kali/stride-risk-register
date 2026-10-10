@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -56,6 +56,18 @@ const EMPTY_KPIS: DashboardKpis = {
   coveragePct: 0,
 };
 
+/* ── Data fetching ─────────────────────────────────────────────────────────── */
+/** Pure fetch (no setState): safe to call from effects and event handlers. */
+async function fetchDashboard(
+  submissionId: string | null,
+): Promise<DashboardData> {
+  const url = submissionId
+    ? `/api/dashboard?submissionId=${encodeURIComponent(submissionId)}`
+    : "/api/dashboard";
+  const raw = await apiGet<Partial<DashboardData>>(url);
+  return normalize(raw);
+}
+
 function normalize(raw: Partial<DashboardData> | null): DashboardData {
   return {
     kpis: { ...EMPTY_KPIS, ...(raw?.kpis ?? {}) },
@@ -86,7 +98,7 @@ function ChartCard({
 }: {
   title: string;
   subtitle?: string;
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
   return (
@@ -115,30 +127,49 @@ function DashboardInner() {
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
-  const load = useMemo(
-    () => async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const url = submissionId
-          ? `/api/dashboard?submissionId=${encodeURIComponent(submissionId)}`
-          : "/api/dashboard";
-        const raw = await apiGet<Partial<DashboardData>>(url);
-        setData(normalize(raw));
-      } catch (err) {
+  // Initial dashboard fetch. State updates happen only in promise
+  // continuations (never synchronously in the effect body), per
+  // react-hooks/set-state-in-effect.
+  useEffect(() => {
+    let cancelled = false;
+    fetchDashboard(submissionId).then(
+      (d) => {
+        if (cancelled) return;
+        setData(d);
+        setError(null);
+        setLoading(false);
+      },
+      (err) => {
+        if (cancelled) return;
         setError(
           err instanceof Error ? err.message : "Could not load dashboard",
         );
-      } finally {
         setLoading(false);
-      }
-    },
-    [submissionId],
-  );
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [submissionId]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Retry button (event handler — synchronous setState is fine here).
+  const retry = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    fetchDashboard(submissionId).then(
+      (d) => {
+        setData(d);
+        setError(null);
+        setLoading(false);
+      },
+      (err) => {
+        setError(
+          err instanceof Error ? err.message : "Could not load dashboard",
+        );
+        setLoading(false);
+      },
+    );
+  }, [submissionId]);
 
   async function generateSummary() {
     if (!hasKey) {
@@ -175,7 +206,7 @@ function DashboardInner() {
   const kpiCards: {
     label: string;
     value: string | number;
-    icon: React.ReactNode;
+    icon: ReactNode;
     href: string;
     tone?: string;
   }[] = [
@@ -257,7 +288,7 @@ function DashboardInner() {
           <TriangleAlert className="h-8 w-8 text-destructive" />
           <p className="text-sm font-medium">Couldn&apos;t load the dashboard</p>
           <p className="text-xs text-muted-foreground">{error}</p>
-          <Button variant="outline" onClick={load}>
+          <Button variant="outline" onClick={retry}>
             Retry
           </Button>
         </div>

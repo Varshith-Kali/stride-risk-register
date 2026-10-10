@@ -52,7 +52,17 @@ export function downloadBlob(filename: string, content: string, mime: string) {
 }
 
 /** CSV-escape a cell value. */
+/**
+ * CSV cell encoding with formula-injection protection.
+ *
+ * Cells starting with =, +, -, or @ are interpreted as formulas by Excel /
+ * Google Sheets when the CSV is opened. Prefixing with a single quote forces
+ * text interpretation (the quote is not displayed). See OWASP "CSV Injection".
+ */
 export function csvCell(value: unknown): string {
-  const s = value === null || value === undefined ? "" : String(value);
+  let s = value === null || value === undefined ? "" : String(value);
+  if (/^[=+\-@]/.test(s)) {
+    s = `'${s}`;
+  }
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }

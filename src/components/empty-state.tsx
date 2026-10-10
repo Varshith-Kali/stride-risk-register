@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 /**
@@ -12,7 +13,7 @@ export function EmptyState({
   icon: LucideIcon;
   title: string;
   hint?: string;
-  action?: React.ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div className="apple-card flex flex-col items-center justify-center px-6 py-14 text-center">

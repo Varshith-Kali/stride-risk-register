@@ -1,14 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { readWorkbook } from "@/core/ooxml";
 import { suggestMapping } from "@/core/columns";
 import { parseThreats } from "@/core/excel";
+import type { ColumnMapping } from "@/core/types";
+import type { WorkbookSheet } from "@/core/ooxml";
 
 const FIXTURE = new URL("./fixtures/sample-threat-model.xlsx", import.meta.url);
 
-const workbook = readWorkbook(readFileSync(FIXTURE));
-const strideSheet = workbook.sheets.find((s) => s.name === "STRIDE")!;
-const mapping = suggestMapping(strideSheet.rows[0]).mapping;
+let strideSheet!: WorkbookSheet;
+let notesSheet!: WorkbookSheet;
+let mapping!: ColumnMapping;
+
+beforeAll(async () => {
+  const workbook = await readWorkbook(readFileSync(FIXTURE));
+  strideSheet = workbook.sheets.find((s) => s.name === "STRIDE")!;
+  notesSheet = workbook.sheets.find((s) => s.name === "Notes")!;
+  mapping = suggestMapping(strideSheet.rows[0]).mapping;
+});
 
 describe("parseThreats — fixture", () => {
   it("parses exactly 12 threats, skipping the blank row", () => {
@@ -92,7 +101,7 @@ describe("parseThreats — robustness", () => {
   it("warns (never crashes) on a sheet whose headers don't match the mapping", () => {
     // Sheet selection happens at the ingest route (per-sheet mapping preview);
     // parseThreats itself degrades gracefully: it warns per missing column.
-    const notes = workbook.sheets.find((s) => s.name === "Notes")!;
+    const notes = notesSheet;
     let result: ReturnType<typeof parseThreats> | undefined;
     expect(() => {
       result = parseThreats([notes], mapping);

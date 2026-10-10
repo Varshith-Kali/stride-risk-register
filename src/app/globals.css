@@ -1,0 +1,274 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Apple-inspired light theme — pure white background, deep near-black text, refined greys */
+:root {
+  --radius: 0.875rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.18 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0 0);
+  --primary: oklch(0.18 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.965 0 0);
+  --secondary-foreground: oklch(0.18 0 0);
+  --muted: oklch(0.965 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --accent: oklch(0.96 0 0);
+  --accent-foreground: oklch(0.18 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.92 0 0);
+  --input: oklch(0.92 0 0);
+  --ring: oklch(0.7 0 0);
+  --chart-1: oklch(0.18 0 0);
+  --chart-2: oklch(0.5 0 0);
+  --chart-3: oklch(0.7 0 0);
+  --chart-4: oklch(0.85 0 0);
+  --chart-5: oklch(0.35 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.18 0 0);
+  --sidebar-primary: oklch(0.18 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.965 0 0);
+  --sidebar-accent-foreground: oklch(0.18 0 0);
+  --sidebar-border: oklch(0.92 0 0);
+  --sidebar-ring: oklch(0.7 0 0);
+}
+
+.dark {
+  --background: oklch(0.13 0 0);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.18 0 0);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.18 0 0);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.98 0 0);
+  --primary-foreground: oklch(0.18 0 0);
+  --secondary: oklch(0.24 0 0);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.24 0 0);
+  --muted-foreground: oklch(0.72 0 0);
+  --accent: oklch(0.24 0 0);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.6 0 0);
+  --chart-1: oklch(0.98 0 0);
+  --chart-2: oklch(0.72 0 0);
+  --chart-3: oklch(0.5 0 0);
+  --chart-4: oklch(0.35 0 0);
+  --chart-5: oklch(0.85 0 0);
+  --sidebar: oklch(0.18 0 0);
+  --sidebar-foreground: oklch(0.98 0 0);
+  --sidebar-primary: oklch(0.98 0 0);
+  --sidebar-primary-foreground: oklch(0.18 0 0);
+  --sidebar-accent: oklch(0.24 0 0);
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.6 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv01", "cv03", "cv04", "cv11";
+    letter-spacing: -0.011em;
+  }
+  ::selection {
+    background: oklch(0.18 0 0 / 12%);
+  }
+}
+
+/* Apple-style typography scale */
+@layer utilities {
+  .text-display {
+    font-size: clamp(2.75rem, 7vw, 5.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.04em;
+    font-weight: 600;
+  }
+  .text-headline {
+    font-size: clamp(2rem, 4.5vw, 3.5rem);
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    font-weight: 600;
+  }
+
+  /* text-title: used for section headings inside cards — kept compact */
+  .text-title {
+    font-size: 1.125rem; /* 18px — clear hierarchy without overwhelming */
+    line-height: 1.4;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+  }
+
+  .text-eyebrow {
+    font-size: 0.75rem;
+    line-height: 1.4;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  /**
+   * .navbar-solid — fully opaque white bar for the sticky navbar and tab bar.
+   *
+   * FIX: The previous .glass utility used 72% opacity which let page content
+   * bleed through when scrolling. Navbars and sticky tab bars must be fully
+   * opaque so underlying content is never visible through them.
+   */
+  .navbar-solid {
+    background-color: oklch(1 0 0);
+    border-bottom: 1px solid oklch(0.92 0 0);
+    box-shadow: 0 1px 0 oklch(0 0 0 / 0.04), 0 2px 8px oklch(0 0 0 / 0.06);
+  }
+  .dark .navbar-solid {
+    background-color: oklch(0.13 0 0);
+    border-bottom: 1px solid oklch(1 0 0 / 8%);
+    box-shadow: 0 1px 0 oklch(0 0 0 / 0.3), 0 2px 8px oklch(0 0 0 / 0.4);
+  }
+
+  /**
+   * .tabbar-solid — fully opaque white bar for the sticky tab bar inside
+   * the Analysis Workspace section.
+   *
+   * Adds a very subtle top shadow so it reads as "floating above" content
+   * without bleeding any underlying text.
+   */
+  .tabbar-solid {
+    background-color: oklch(1 0 0);
+    border-bottom: 1px solid oklch(0.92 0 0);
+    box-shadow: 0 2px 12px oklch(0 0 0 / 0.06);
+  }
+  .dark .tabbar-solid {
+    background-color: oklch(0.13 0 0);
+    border-bottom: 1px solid oklch(1 0 0 / 8%);
+    box-shadow: 0 2px 12px oklch(0 0 0 / 0.4);
+  }
+
+  .apple-card {
+    @apply rounded-2xl border border-border bg-card;
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.04), 0 4px 16px oklch(0 0 0 / 0.04);
+    transition: box-shadow 0.25s ease;
+  }
+  .apple-card:hover {
+    /* Removed translateY — causes layout jitter on lists of cards */
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.06), 0 8px 28px oklch(0 0 0 / 0.08);
+  }
+  .apple-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-medium transition-all;
+    letter-spacing: -0.01em;
+  }
+  .apple-button-primary {
+    @apply bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98];
+  }
+  .apple-button-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-accent active:scale-[0.98];
+  }
+  .grain-overlay {
+    background-image: radial-gradient(oklch(0 0 0 / 0.025) 1px, transparent 1px);
+    background-size: 4px 4px;
+  }
+  .fade-in {
+    animation: fadeIn 0.6s ease forwards;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .shimmer {
+    background: linear-gradient(90deg, oklch(0.96 0 0) 0%, oklch(0.92 0 0) 50%, oklch(0.96 0 0) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Hide scrollbar track on tab scroll containers */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.85 0 0);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.7 0 0);
+  background-clip: padding-box;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: oklch(0.4 0 0);
+  background-clip: padding-box;
+}

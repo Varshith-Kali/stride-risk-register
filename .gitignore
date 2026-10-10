@@ -1,0 +1,24 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# next.js
+.next/
+out/
+build/
+
+# runtime data (SQLite DB is created locally on first run)
+data/*.db
+data/*.db-*
+
+# env
+.env
+.env*.local
+
+# testing
+coverage/
+
+# misc
+.DS_Store
+*.log

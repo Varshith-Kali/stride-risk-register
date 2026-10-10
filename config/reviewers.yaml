@@ -1,0 +1,19 @@
+# ─── Reviewer roster ──────────────────────────────────────────────────────────
+# The submission form's reviewer dropdown is populated from this file.
+# Add reviewers here (up to ~15); the app seeds the `reviewers` table from
+# this file on startup and picks up new names automatically.
+#
+#   - name:   display name (must be unique)
+#   - role:   free-text role shown next to the name
+#   - active: false hides the reviewer from the dropdown WITHOUT deleting
+#             their historical submissions, links and audit trail.
+#
+# Never remove a reviewer who has submissions — set active: false instead.
+
+reviewers:
+  - name: "Varshith Puli"
+    role: "Security Architect"
+    active: true
+  - name: "Prathamesh Mohite"
+    role: "Security Architect"
+    active: true

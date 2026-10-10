@@ -129,6 +129,12 @@ export async function POST(req: NextRequest) {
       if (!headers.some((h) => h.trim() !== "")) continue;
       const mapping = mappingJson ? (mappingJson as ColumnMapping) : suggestMapping(headers).mapping;
       const parsed = parseThreats([{ name: sheet.name, rows: sheet.rows }], mapping);
+      // A sheet that yields no titled threats under this mapping is not a
+      // threat table (e.g. a cover/"Notes" sheet). Skip it silently instead of
+      // surfacing a "column not found" / "empty title" warning for every row —
+      // that noise is what made a normal upload look broken.
+      const titled = parsed.threats.filter((t) => t.title.trim() !== "");
+      if (titled.length === 0) continue;
       allThreats.push(...parsed.threats);
       for (const w of parsed.warnings) warnings.push(`${sheet.name}: ${w}`);
     }
@@ -314,7 +320,20 @@ export async function GET(req: NextRequest) {
       ...params
     );
 
-    return NextResponse.json({ ok: true, data: { submissions: rows } });
+    const submissions = rows.map((s) => ({
+      id: s.id,
+      projectName: s.project_name,
+      reviewerName: s.reviewer_name,
+      version: s.version,
+      reviewDate: s.review_date,
+      createdAt: s.created_at,
+      notes: s.notes,
+      excelFilename: s.excel_filename,
+      threatCount: s.threat_count,
+      recoCount: s.reco_count,
+    }));
+
+    return NextResponse.json({ ok: true, data: { submissions } });
   } catch (e) {
     return handleError(e);
   }

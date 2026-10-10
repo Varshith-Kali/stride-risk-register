@@ -8,11 +8,13 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 interface TimelineEvent {
-  date: string;
+  id: string;
   type: "submission" | "review" | "status_change";
-  label: string;
-  project: string;
-  reviewer: string;
+  at: string;
+  actor: string;
+  title: string;
+  detail: string;
+  projectName: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -38,11 +40,13 @@ export async function GET(req: NextRequest) {
     const events: TimelineEvent[] = [];
     for (const s of subs) {
       events.push({
-        date: s.created_at,
+        id: `sub-${s.id}`,
+        at: s.created_at,
         type: "submission",
-        label: `Submission v${s.version} uploaded`,
-        project: s.project_name,
-        reviewer: s.reviewer_name,
+        title: `Submission v${s.version} uploaded`,
+        detail: `${s.project_name} · reviewed by ${s.reviewer_name}`,
+        actor: s.reviewer_name,
+        projectName: s.project_name,
       });
       // A review event only when the review date differs from the upload date.
       if (
@@ -50,27 +54,31 @@ export async function GET(req: NextRequest) {
         s.review_date.slice(0, 10) !== s.created_at.slice(0, 10)
       ) {
         events.push({
-          date: s.review_date,
+          id: `rev-${s.id}`,
+          at: s.review_date,
           type: "review",
-          label: `Review completed (v${s.version})`,
-          project: s.project_name,
-          reviewer: s.reviewer_name,
+          title: `Review completed (v${s.version})`,
+          detail: `${s.project_name} · reviewed by ${s.reviewer_name}`,
+          actor: s.reviewer_name,
+          projectName: s.project_name,
         });
       }
     }
 
     const changes = all<{
+      id: number;
       threat_id: number;
       threat_title: string;
       from_status: string;
       to_status: string;
       changed_by: string;
       changed_at: string;
+      reason: string | null;
       project_name: string;
       reviewer_name: string;
     }>(
-      `SELECT h.threat_id, t.title AS threat_title, h.from_status, h.to_status,
-              h.changed_by, h.changed_at, p.name AS project_name, r.name AS reviewer_name
+      `SELECT h.id, h.threat_id, t.title AS threat_title, h.from_status, h.to_status,
+              h.changed_by, h.changed_at, h.reason, p.name AS project_name, r.name AS reviewer_name
        FROM status_history h
        JOIN threats t ON t.id = h.threat_id
        JOIN submissions s ON s.id = t.submission_id
@@ -80,28 +88,30 @@ export async function GET(req: NextRequest) {
        LIMIT 500`
     );
     for (const c of changes) {
+      const fromPart = c.from_status ? `${c.from_status} → ` : "";
       events.push({
-        date: c.changed_at,
+        id: `status-${c.id}`,
+        at: c.changed_at,
         type: "status_change",
-        label: `"${c.threat_title.slice(0, 80)}" → ${c.to_status} (by ${c.changed_by})`,
-        project: c.project_name,
-        reviewer: c.reviewer_name,
+        title: `"${c.threat_title.slice(0, 80)}" ${fromPart}${c.to_status}`,
+        detail: c.reason ? `${c.reason}` : `Status set to ${c.to_status}`,
+        actor: c.changed_by,
+        projectName: c.project_name,
       });
     }
 
-    events.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    events.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 
     const nowIso = new Date().toISOString();
     const ageing = queryThreats("t.status NOT IN ('Mitigated','Accepted Risk','Rejected/Not Applicable')")
       .filter((t) => !isClosedStatus(t.status))
       .map((t) => ({
         threatId: t.id,
+        ref: t.threat_ref || `T-${t.id}`,
         title: t.title,
-        project: t.project_name,
-        reviewer: t.reviewer_name,
+        projectName: t.project_name,
         status: t.status,
         daysOpen: daysBetween(t.review_date || t.created_at, nowIso),
-        reviewDate: t.review_date,
       }))
       .sort((a, b) => b.daysOpen - a.daysOpen)
       .slice(0, 200);

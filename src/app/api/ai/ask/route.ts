@@ -26,8 +26,10 @@ export const maxDuration = 120;
 
 // Reasoning models (gpt-5.5) spend output tokens on hidden reasoning before
 // emitting visible JSON; too small a budget is exhausted mid-reasoning and
-// returns an incomplete, empty response. Mirror STRIDE GPT's budgets.
-const MAX_TOKENS_ASK = 8192;
+// returns an incomplete, empty response. This platform answers free-form
+// questions over a large register context, so budget well above STRIDE GPT's
+// base to leave room for reasoning plus a full answer.
+const MAX_TOKENS_ASK = 16384;
 const MAX_CONTEXT_CHARS = 30_000;
 const MAX_QUESTION_CHARS = 2000;
 

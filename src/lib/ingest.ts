@@ -103,7 +103,18 @@ export function isThreatStatus(v: unknown): v is ThreatStatusValue {
 
 export const THREAT_STATUS_LIST: string[] = [...THREAT_STATUSES];
 
-const RECO_STATUSES = ["Open", "In Progress", "Done", "Deferred"] as const;
+// Reviewer-facing recommendation statuses. The union spans the backend's
+// original vocabulary (Open/Done) and the UI's labels (Pending/Implemented/
+// Rejected) so a status set from either side round-trips without a 400.
+const RECO_STATUSES = [
+  "Open",
+  "Pending",
+  "In Progress",
+  "Done",
+  "Implemented",
+  "Deferred",
+  "Rejected",
+] as const;
 
 export function isRecoStatus(v: unknown): v is (typeof RECO_STATUSES)[number] {
   return typeof v === "string" && (RECO_STATUSES as readonly string[]).includes(v);

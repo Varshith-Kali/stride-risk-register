@@ -31,9 +31,9 @@ export const maxDuration = 120;
 
 // Reasoning models (gpt-5.5) spend output tokens on hidden reasoning before
 // emitting visible JSON. A small budget is exhausted mid-reasoning and the
-// Responses API returns status "incomplete" with no content. Mirror STRIDE
-// GPT's generous budgets so the model has room to finish.
-const MAX_TOKENS_SUMMARY = 6144;
+// Responses API returns status "incomplete" with no content. Budget well above
+// STRIDE GPT's base so reasoning plus the executive summary both fit.
+const MAX_TOKENS_SUMMARY = 12288;
 const MAX_TOP_THREATS = 50;
 
 function numOrNull(v: unknown): number | null {

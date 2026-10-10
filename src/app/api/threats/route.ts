@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, handleError } from "@/lib/api-utils";
 import { queryThreats, enrichThreats } from "@/lib/threat-views";
+import { toThreat } from "@/lib/serialize";
 import { sane, isThreatStatus } from "@/lib/ingest";
 
 export const runtime = "nodejs";
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
     }
 
     const threats = enrichThreats(queryThreats(where.length ? where.join(" AND ") : "1=1", ...params));
-    return NextResponse.json({ ok: true, data: { threats } });
+    return NextResponse.json({ ok: true, data: { threats: threats.map(toThreat) } });
   } catch (e) {
     return handleError(e);
   }

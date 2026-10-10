@@ -8,7 +8,7 @@ import {
   latestSubmissionIds,
   hasResponse,
 } from "@/lib/threat-views";
-import { sane, daysAgo, isClosedStatus } from "@/lib/ingest";
+import { sane } from "@/lib/ingest";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
   const rl = checkRateLimit(req);
   if (rl) return rl;
   try {
-    const projectIdRaw = sane(req.nextUrl.searchParams.get("projectId"), 20);
+    const q = req.nextUrl.searchParams;
+    const projectIdRaw = sane(q.get("projectId"), 20);
     let projectId: number | undefined;
     if (projectIdRaw) {
       if (!/^\d+$/.test(projectIdRaw)) {
@@ -28,29 +29,39 @@ export async function GET(req: NextRequest) {
       projectId = Number(projectIdRaw);
     }
 
-    // Current posture = latest submission version per project (no double-counting).
-    const submissionIds = latestSubmissionIds(projectId);
+    const submissionIdRaw = sane(q.get("submissionId"), 20);
+    let submissionIdFilter: number | undefined;
+    if (submissionIdRaw) {
+      if (!/^\d+$/.test(submissionIdRaw)) {
+        return NextResponse.json({ ok: false, error: "Invalid submissionId." }, { status: 400 });
+      }
+      submissionIdFilter = Number(submissionIdRaw);
+    }
+
+    const emptyData = {
+      kpis: {
+        totalThreats: 0,
+        criticalHigh: 0,
+        withResponse: 0,
+        noResponse: 0,
+        unmappedRecos: 0,
+        coveragePct: 0,
+      },
+      stride: [],
+      risk: [],
+      topThreats: [],
+      components: [],
+      coverage: { withResponse: 0, noResponse: 0 },
+      reviewers: [],
+    };
+
+    // A specific submission scopes to exactly that submission; otherwise
+    // "current posture" = latest submission version per project.
+    const submissionIds = submissionIdFilter
+      ? [submissionIdFilter]
+      : latestSubmissionIds(projectId);
     if (!submissionIds.length) {
-      return NextResponse.json({
-        ok: true,
-        data: {
-          kpis: {
-            totalThreats: 0,
-            criticalHigh: 0,
-            withResponse: 0,
-            withoutResponse: 0,
-            unmappedRecos: 0,
-            reviewerCoveragePct: 0,
-          },
-          strideDistribution: [],
-          riskDistribution: [],
-          topThreats: [],
-          coverage: { with: 0, without: 0 },
-          reviewerWorkload: [],
-          componentBreakdown: [],
-          ageingBuckets: { "0-7 days": 0, "8-30 days": 0, "31-90 days": 0, "90+ days": 0 },
-        },
-      });
+      return NextResponse.json({ ok: true, data: emptyData });
     }
 
     const placeholders = submissionIds.map(() => "?").join(",");
@@ -73,7 +84,7 @@ export async function GET(req: NextRequest) {
     const withResponse = threats.filter((t) => hasResponse(linksByThreat.get(t.id) ?? [])).length;
     const totalThreats = threats.length;
     const criticalHigh = threats.filter((t) => CRITICAL_HIGH.has(t.risk_level)).length;
-    const reviewerCoveragePct = totalThreats
+    const coveragePct = totalThreats
       ? Math.round((withResponse / totalThreats) * 1000) / 10
       : 0;
 
@@ -84,63 +95,43 @@ export async function GET(req: NextRequest) {
         m.set(k, (m.get(k) ?? 0) + 1);
       }
       return [...m.entries()]
-        .map(([label, count]) => ({ label, count }))
-        .sort((a, b) => b.count - a.count);
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value);
     };
 
-    const strideDistribution = countBy((t) => t.stride_category);
-    const riskDistribution = countBy((t) => t.risk_level);
-    const componentBreakdown = countBy((t) => t.component).slice(0, 20);
+    const stride = countBy((t) => t.stride_category);
+    const risk = countBy((t) => t.risk_level);
+    const components = countBy((t) => t.component).slice(0, 20);
 
     const topThreats = [...threats]
       .sort((a, b) => (b.rank_score ?? -1) - (a.rank_score ?? -1))
       .slice(0, 10)
       .map((t) => ({
         id: t.id,
-        ref: t.threat_ref,
         title: t.title,
         risk: t.risk_level,
-        stride: t.stride_category,
-        rankScore: t.rank_score,
-        rankExplanation: t.rank_explanation,
         project: t.project_name,
-        reviewer: t.reviewer_name,
+        score: t.rank_score ?? undefined,
       }));
 
-    // Reviewer workload across the same latest-version scope.
+    // Reviewer workload across the same scope.
     const workload = new Map<
       string,
-      { reviewer: string; submissions: Set<number>; openThreats: number }
+      { name: string; submissions: Set<number>; threats: number }
     >();
     for (const t of threats) {
       const w = workload.get(t.reviewer_name) ?? {
-        reviewer: t.reviewer_name,
+        name: t.reviewer_name,
         submissions: new Set<number>(),
-        openThreats: 0,
+        threats: 0,
       };
       w.submissions.add(t.submission_id);
-      if (!isClosedStatus(t.status)) w.openThreats++;
+      w.threats++;
       workload.set(t.reviewer_name, w);
     }
-    const reviewerWorkload = [...workload.values()]
-      .map((w) => ({ reviewer: w.reviewer, submissions: w.submissions.size, openThreats: w.openThreats }))
-      .sort((a, b) => b.openThreats - a.openThreats);
-
-    // Ageing of open threats by review date.
-    const buckets: Record<string, number> = {
-      "0-7 days": 0,
-      "8-30 days": 0,
-      "31-90 days": 0,
-      "90+ days": 0,
-    };
-    for (const t of threats) {
-      if (isClosedStatus(t.status)) continue;
-      const days = daysAgo(t.review_date || t.created_at);
-      if (days <= 7) buckets["0-7 days"]++;
-      else if (days <= 30) buckets["8-30 days"]++;
-      else if (days <= 90) buckets["31-90 days"]++;
-      else buckets["90+ days"]++;
-    }
+    const reviewers = [...workload.values()]
+      .map((w) => ({ name: w.name, threats: w.threats, submissions: w.submissions.size }))
+      .sort((a, b) => b.threats - a.threats);
 
     return NextResponse.json({
       ok: true,
@@ -149,17 +140,16 @@ export async function GET(req: NextRequest) {
           totalThreats,
           criticalHigh,
           withResponse,
-          withoutResponse: totalThreats - withResponse,
+          noResponse: totalThreats - withResponse,
           unmappedRecos,
-          reviewerCoveragePct,
+          coveragePct,
         },
-        strideDistribution,
-        riskDistribution,
+        stride,
+        risk,
         topThreats,
-        coverage: { with: withResponse, without: totalThreats - withResponse },
-        reviewerWorkload,
-        componentBreakdown,
-        ageingBuckets: buckets,
+        components,
+        coverage: { withResponse, noResponse: totalThreats - withResponse },
+        reviewers,
       },
     });
   } catch (e) {

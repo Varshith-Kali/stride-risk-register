@@ -37,7 +37,11 @@ export const maxDuration = 120;
 const THREATS_PER_CALL = 40;
 const MAX_THREATS = 500;
 const MAX_RECOS = 200;
-const MAX_TOKENS_MAP = 8192; // mirrors STRIDE GPT's RECOMMENDATIONS budget
+// Reasoning models (gpt-5.5) spend output tokens on hidden reasoning before
+// emitting the links JSON. This platform maps up to 40 threats × 200 recos per
+// call, so the visible JSON alone can be large — give generous headroom beyond
+// STRIDE GPT's base budget so reasoning never starves the answer.
+const MAX_TOKENS_MAP = 16384;
 
 interface MapRequestBody {
   threats: unknown;

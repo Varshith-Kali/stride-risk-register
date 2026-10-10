@@ -3,6 +3,7 @@ import { checkRateLimit, readJsonRequest, handleError } from "@/lib/api-utils";
 import { get, run, transaction, audit, now } from "@/db";
 import type { ThreatRow } from "@/db/schema";
 import { queryThreats, enrichThreats } from "@/lib/threat-views";
+import { toThreat } from "@/lib/serialize";
 import { sane, isIsoDate, isThreatStatus } from "@/lib/ingest";
 
 export const runtime = "nodejs";
@@ -20,6 +21,7 @@ interface AcceptedRiskBody {
 
 interface ThreatPatchBody {
   status?: unknown;
+  statusReason?: unknown;
   priorityOverride?: unknown;
   priorityOverrideReason?: unknown;
   changedBy?: unknown;
@@ -57,6 +59,9 @@ export async function PATCH(
     if (status !== undefined && !isThreatStatus(status)) {
       return bad("Invalid status. Must be one of: Open, In Progress, Mitigated, Accepted Risk, Deferred, Rejected/Not Applicable.");
     }
+
+    // Reason attached to the status change (shown in the audit/status history).
+    const statusReason = sane(body.statusReason, 2000);
 
     const hasOverrideKey = body.priorityOverride !== undefined && body.priorityOverride !== null;
     const priorityOverride = hasOverrideKey ? sane(body.priorityOverride, 100) : undefined;
@@ -106,7 +111,7 @@ export async function PATCH(
           existing.status,
           status,
           changedBy,
-          priorityOverrideReason,
+          statusReason || priorityOverrideReason || null,
           now()
         );
       }
@@ -126,7 +131,10 @@ export async function PATCH(
 
       const detailParts: string[] = [];
       if (status !== undefined && status !== existing.status) {
-        detailParts.push(`status ${existing.status} → ${status}`);
+        detailParts.push(
+          `status ${existing.status} → ${status}` +
+            (statusReason ? ` (reason: ${statusReason})` : "")
+        );
       }
       if (hasOverrideKey) {
         detailParts.push(
@@ -139,7 +147,7 @@ export async function PATCH(
     });
 
     const updated = enrichThreats(queryThreats("t.id = ?", threatId))[0];
-    return NextResponse.json({ ok: true, data: { threat: updated } });
+    return NextResponse.json({ ok: true, data: toThreat(updated) });
   } catch (e) {
     return handleError(e);
   }

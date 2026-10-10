@@ -92,7 +92,7 @@ export default function PortfolioPage() {
             return (
               <Link
                 key={String(p.id)}
-                href={`/register?projectId=${encodeURIComponent(String(p.id))}`}
+                href={`/register?project=${encodeURIComponent(p.name ?? "")}`}
                 className="block"
               >
                 <Card className="apple-card h-full cursor-pointer">

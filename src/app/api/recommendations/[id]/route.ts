@@ -33,7 +33,7 @@ export async function PATCH(
 
     const status = sane(body.status, 50);
     if (!isRecoStatus(status)) {
-      return bad("Invalid status. Must be one of: Open, In Progress, Done, Deferred.");
+      return bad("Invalid status. Must be one of: Open, Pending, In Progress, Done, Implemented, Deferred, Rejected.");
     }
     const changedBy = sane(body.changedBy, 200) || "system";
 

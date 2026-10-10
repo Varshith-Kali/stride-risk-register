@@ -24,7 +24,15 @@ export async function GET(req: NextRequest) {
       : all<LibraryRow>(
           `SELECT * FROM recommendation_library ORDER BY usage_count DESC, id DESC LIMIT 200`
         );
-    return NextResponse.json({ ok: true, data: { library: rows } });
+    const items = rows.map((r) => ({
+      id: r.id,
+      text: r.text,
+      category: r.category,
+      approvedBy: r.approved_by,
+      usageCount: r.usage_count,
+      createdAt: r.created_at,
+    }));
+    return NextResponse.json({ ok: true, data: { items } });
   } catch (e) {
     return handleError(e);
   }

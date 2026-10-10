@@ -88,12 +88,14 @@ export function linkCounts(links: LinkView[]): LinkCounts {
 }
 
 export interface ThreatView extends ThreatListRow {
+  /** All links regardless of decision (incl. proposed — the drawer decides). */
+  links: LinkView[];
   /** Links with a human decision (accepted/rejected). */
   decided_links: LinkView[];
   link_counts: LinkCounts;
 }
 
-/** Attach decided links + counts to a list of threat rows. */
+/** Attach links (all + decided) + counts to a list of threat rows. */
 export function enrichThreats(rows: ThreatListRow[]): ThreatView[] {
   const links = queryLinksForThreats(rows.map((t) => t.id));
   const byThreat = groupLinksByThreat(links);
@@ -101,6 +103,7 @@ export function enrichThreats(rows: ThreatListRow[]): ThreatView[] {
     const allLinks = byThreat.get(t.id) ?? [];
     return {
       ...t,
+      links: allLinks,
       decided_links: allLinks.filter((l) => l.decision !== "proposed"),
       link_counts: linkCounts(allLinks),
     };

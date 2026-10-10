@@ -92,10 +92,18 @@ export async function POST(req: NextRequest) {
       data: {
         fingerprint: fp,
         sheets,
-        suggestedMapping: suggested.mapping,
-        mappingConfidence: suggested.confidence,
-        mappingNotes: suggested.notes,
-        savedMapping,
+        // The UI (IngestPreview DTO) expects the structured MappingSuggestion
+        // shape { mapping, confidence, notes } for both suggested and saved —
+        // returning a flat ColumnMapping here left `suggestedMapping.mapping`
+        // undefined, so the column-mapping step rendered blank after "Next".
+        suggestedMapping: {
+          mapping: suggested.mapping,
+          confidence: suggested.confidence,
+          notes: suggested.notes,
+        },
+        savedMapping: savedMapping
+          ? { mapping: savedMapping, confidence: "high" as const, notes: [] }
+          : null,
       },
     });
   } catch (e) {

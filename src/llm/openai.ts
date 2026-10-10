@@ -101,7 +101,10 @@ async function callOnce(
       body: JSON.stringify({
         model: config.model,
         instructions: opts.instructions,
-        input: opts.input,
+        // Mirror STRIDE GPT's proven request shape: the user turn travels as a
+        // messages array inside `input`, never as a bare string or a
+        // role:"system" item (the Responses API rejects system items in input).
+        input: [{ role: "user", content: opts.input }],
         text: { format: { type: "json_object" } },
         store: false,
         max_output_tokens: opts.maxTokens,
@@ -137,8 +140,94 @@ async function callOnce(
     );
   }
 
+  assertComplete(data);
+
   const text = extractText(data);
   return parseJsonStrict(text);
+}
+
+/**
+ * Reasoning models (e.g. gpt-5.5) spend output tokens on hidden reasoning
+ * before emitting any visible text. If `max_output_tokens` is exhausted during
+ * that phase the Responses API returns HTTP 200 with status "incomplete" and
+ * no message content — which would otherwise surface as a misleading "empty
+ * response". Detect it explicitly and tell the caller the real cause.
+ */
+function assertComplete(data: unknown): void {
+  const root = data as
+    | { status?: unknown; incomplete_details?: { reason?: unknown } }
+    | null;
+  if (root?.status !== "incomplete") return;
+  const reason = root.incomplete_details?.reason;
+  if (reason === "max_output_tokens") {
+    throw new LlmError(
+      "provider",
+      "The AI used its entire output budget on reasoning before returning an answer. Please try again."
+    );
+  }
+  throw new LlmError(
+    "provider",
+    "The AI did not finish generating a response. Please try again."
+  );
+}
+
+/**
+ * Lightweight connectivity probe used by POST /api/ai/test.
+ *
+ * Verifies three things with a single minimal request:
+ *   (a) the API key is valid and authorized,
+ *   (b) the selected model is accessible to this key,
+ *   (c) the provider is reachable within the timeout.
+ *
+ * Crucially it does NOT request json_object output and does NOT parse the
+ * model's text — exactly like STRIDE GPT's test-connection route, which only
+ * checks `res.ok`. A reasoning model that spends its tiny token budget on
+ * reasoning still returns HTTP 200, so the probe passes as long as auth and
+ * model access are valid. Requiring parseable JSON here (the previous bug)
+ * made the probe fail with "empty response" for every valid key.
+ *
+ * Resolves on success; throws a typed LlmError on any failure.
+ */
+export async function pingConnection(config: LlmConfig): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+
+  let res: Response;
+  try {
+    res = await fetch(RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        input: [{ role: "user", content: "ping" }],
+        max_output_tokens: 16,
+        store: false,
+      }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new LlmError(
+        "timeout",
+        "The connection test timed out. Please try again."
+      );
+    }
+    throw new LlmError(
+      "network",
+      "Could not reach the AI provider. Check your network connection and try again."
+    );
+  }
+  clearTimeout(timer);
+
+  // Only connectivity + auth + model access matter here. A 200 with an
+  // incomplete/empty body (reasoning consumed the token budget) is a PASS.
+  if (!res.ok) {
+    throw await classifyHttpError(res);
+  }
 }
 
 /** Classify a non-2xx Responses API response into an LlmError kind. */
@@ -151,10 +240,24 @@ async function classifyHttpError(res: Response): Promise<LlmError> {
     bodyText = "";
   }
 
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return new LlmError(
       "invalid-key",
-      "The API key was rejected by the provider (invalid, revoked, or lacking access). Check the key and try again.",
+      "The API key was rejected by the provider (invalid or revoked). Check the key and try again.",
+      status
+    );
+  }
+  if (status === 403) {
+    return new LlmError(
+      "invalid-key",
+      "Access denied (403). This API key is not authorized for the selected model. Check your OpenAI organization/project settings.",
+      status
+    );
+  }
+  if (status === 404) {
+    return new LlmError(
+      "provider",
+      "The selected model was not found (404). Ensure the model is provisioned for this API key.",
       status
     );
   }

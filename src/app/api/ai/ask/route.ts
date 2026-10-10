@@ -24,7 +24,10 @@ import { validateAsk } from "@/llm/schemas";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const MAX_TOKENS_ASK = 4096;
+// Reasoning models (gpt-5.5) spend output tokens on hidden reasoning before
+// emitting visible JSON; too small a budget is exhausted mid-reasoning and
+// returns an incomplete, empty response. Mirror STRIDE GPT's budgets.
+const MAX_TOKENS_ASK = 8192;
 const MAX_CONTEXT_CHARS = 30_000;
 const MAX_QUESTION_CHARS = 2000;
 
